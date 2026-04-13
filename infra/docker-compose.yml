@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: nexus-bus
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    networks:
+      - nexus-network
+    command: redis-server --appendonly yes
+
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: nexus-insight
+    ports:
+      - '5540:5540'
+    networks:
+      - nexus-network
+    depends_on:
+      - redis
+
+networks:
+  nexus-network:
+    driver: bridge
+
+volumes:
+  redis_data:

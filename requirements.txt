@@ -1,0 +1,9 @@
+fastapi[all]
+redis
+pydantic-settings
+loguru
+rich
+websockets
+requests
+langchain
+langgraph
