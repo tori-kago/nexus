@@ -36,6 +36,7 @@ class MessageBus:
 
 CHANNELS = {
     'INPUT': 'nexus.input',
+    'AUDIO_IN': 'nexus.audio_in',
     'THOUGHT': 'nexus.thought',
     'TEXT': 'nexus.text',
     'COMMAND': 'nexus.command',

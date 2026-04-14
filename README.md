@@ -26,7 +26,12 @@ python -m src.brain.worker
 python -m src.exp.worker
 ```
 
-### 5. 終端與監控 (Optional)
+### 5. 語音轉譯 (STT Worker - New)
+```bash
+python -m src.stt.worker
+```
+
+### 6. 終端與監控 (Optional)
 - **交談終端 (PC Agent)**: `python -m src.agent.cli_console`
 - **Telegram Bot (New)**: 
   1. 在根目錄建立 `.env` 並填入 `TELEGRAM_TOKEN` 與 `TELEGRAM_CHAT_ID`。
@@ -36,6 +41,12 @@ python -m src.exp.worker
 ---
 
 ## 🧪 協定與功能測試 (NUP v1.0)
+...
+#### 3. 語音輸入聯動 (STT Worker)
+- **測試動作**: 對 Telegram Bot 發送一段語音訊息。
+- **驗收點**: 
+    - 觀察 `Monitor`: 應先出現 `nexus.audio_in` (包含檔案路徑)，隨後轉譯出 `nexus.input` 文字。
+    - 大腦應根據轉譯出的文字內容進行回覆。
 
 我們提供了一個自動化測試指令碼來驗證通訊協定的合規性：
 ```bash

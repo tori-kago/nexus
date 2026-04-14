@@ -6,6 +6,7 @@ import websockets
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from uuid import uuid4
 from src.shared.schemas import NexusEnvelope
 
 # 載入 .env 檔案中的環境變數
@@ -17,10 +18,47 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8000")
 WS_URL = os.getenv("WS_URL", "ws://localhost:8000/ws")
 
+# 確保暫存目錄存在
+TEMP_AUDIO_DIR = "temp/audio"
+os.makedirs(TEMP_AUDIO_DIR, exist_ok=True)
+
 class NexusTelegramBot:
     def __init__(self, token: str, chat_id: str):
         self.app = ApplicationBuilder().token(token).build()
         self.master_chat_id = int(chat_id) if chat_id.isdigit() else None
+
+    async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """處理 Telegram 語音訊息並通知 STT Worker"""
+        current_chat_id = update.effective_chat.id
+        
+        # 安全性檢查
+        if self.master_chat_id and current_chat_id != self.master_chat_id:
+            return
+
+        print(f"[TG] Received voice from Master ({current_chat_id})")
+        
+        try:
+            # 1. 下載語音檔
+            voice_file = await context.bot.get_file(update.message.voice.file_id)
+            trace_id = str(uuid4())
+            file_path = os.path.join(TEMP_AUDIO_DIR, f"{trace_id}.ogg")
+            await voice_file.download_to_drive(file_path)
+            
+            # 2. 通知 STT Worker (發布到 nexus.audio_in)
+            from src.shared.bus import MessageBus, CHANNELS
+            bus = MessageBus()
+            audio_info = {
+                "file_path": file_path,
+                "trace_id": trace_id,
+                "session_id": str(current_chat_id),
+                "platform": "telegram_voice",
+                "user": update.effective_user.first_name
+            }
+            bus.r.publish(CHANNELS['AUDIO_IN'], json.dumps(audio_info))
+            print(f"[TG] Voice downloaded and notification sent: {file_path}")
+            
+        except Exception as e:
+            await update.message.reply_text(f"❌ Voice Process Error: {e}")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """處理 Telegram 用戶輸入並轉發至 Nexus Gateway"""
@@ -92,6 +130,7 @@ class NexusTelegramBot:
         
         # 添加處理程序
         self.app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), self.handle_message))
+        self.app.add_handler(MessageHandler(filters.VOICE, self.handle_voice)) # 註冊語音處理器
         
         # 建立事件循環
         loop = asyncio.get_event_loop()

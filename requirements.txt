@@ -9,3 +9,5 @@ langchain
 langgraph
 python-telegram-bot
 python-dotenv
+faster-whisper
+pydub
