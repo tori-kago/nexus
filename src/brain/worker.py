@@ -3,52 +3,86 @@ import json
 import asyncio
 from langchain_core.messages import HumanMessage
 from src.brain.logic import create_brain_graph
+from src.shared.bus import MessageBus, CHANNELS
+from src.shared.schemas import NexusEnvelope, MessageType
+from pydantic import ValidationError
 
 async def run_brain_worker():
-    # 1. 初始化 Redis 連線
-    r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-    p = r.pubsub()
-    p.subscribe('nexus.input')
+    # 1. 初始化 Bus
+    bus = MessageBus()
+    p = bus.r.pubsub()
+    p.subscribe(CHANNELS['INPUT'])
     
     # 2. 初始化 LangGraph 邏輯
     graph = create_brain_graph()
     
-    print('--- LangGraph Brain Worker (via Gemini CLI) Started ---')
+    print('--- LangGraph Brain Worker (NUP v1.0) Started ---')
+    print(f'[*] Subscribed to {CHANNELS["INPUT"]}')
     
     # 3. 異步監聽訊息並處理
     while True:
-        # 這裡使用異步方式檢查 Redis
-        message = p.get_message(ignore_subscribe_messages=True)
-        if message:
-            try:
-                # 解析輸入資料
-                input_data = json.loads(message['data'])
-                user_text = input_data.get('message', '')
-                
-                print(f'[Brain] Thinking about: {user_text}')
-                r.publish('nexus.thought', json.dumps({"thought": f"Thinking about: {user_text}"}))
-                
-                # 調用 LangGraph 大腦思考
-                # 這裡使用 invoke 並傳入初始狀態
-                result = graph.invoke({"messages": [HumanMessage(content=user_text)]})
-                
-                # 獲取模型最後的回覆
-                last_message = result['messages'][-1]
-                response_text = last_message.content
-                
-                # 將回覆推送到 Redis
-                response_payload = {"response": response_text}
-                r.publish('nexus.text', json.dumps(response_payload))
-                
-                # 發布反射結果到 Thought 頻道供監控
-                r.publish('nexus.thought', json.dumps({"thought": f"Replied and reflected. Response len: {len(response_text)}"}))
-                
-                print(f'[Brain] Replied: {response_text[:50]}...')
-            except Exception as e:
-                print(f'[Brain Error] {e}')
-                r.publish('nexus.thought', json.dumps({"thought": f"Error: {str(e)}", "level": "error"}))
+        try:
+            # 使用非阻塞方式獲取訊息
+            message = p.get_message(ignore_subscribe_messages=True)
+            if message:
+                raw_data = message['data']
+                try:
+                    # 相容 Pydantic v1/v2 的解析方式
+                    if hasattr(NexusEnvelope, "model_validate_json"):
+                        input_envelope = NexusEnvelope.model_validate_json(raw_data)
+                    else:
+                        input_envelope = NexusEnvelope.parse_raw(raw_data)
+                        
+                    trace_id = input_envelope.trace_id
+                    user_text = input_envelope.payload.get('content', '')
+                    
+                    print(f'[Brain] 📥 Received Trace: {trace_id} | Input: {user_text[:30]}...')
+                    
+                    # 調用 LangGraph 大腦思考
+                    initial_state = {
+                        "messages": [HumanMessage(content=user_text)],
+                        "trace_id": trace_id
+                    }
+                    
+                    # 使用 to_thread 避免阻塞事件循環 (graph.invoke 通常是同步的)
+                    result = await asyncio.to_thread(graph.invoke, initial_state)
+                    
+                    # 獲取模型最後的回覆
+                    last_message = result['messages'][-1]
+                    response_text = last_message.content
+                    
+                    # 將回覆封裝為 Envelope 並發布
+                    output_envelope = NexusEnvelope(
+                        source="brain:worker",
+                        type=MessageType.TEXT,
+                        trace_id=trace_id,
+                        payload={
+                            "content": response_text,
+                            "emotion": "focused"
+                        }
+                    )
+                    bus.publish_envelope(output_envelope)
+                    print(f'[Brain] ✅ Success Trace: {trace_id}')
+                    
+                except ValidationError as ve:
+                    print(f'[Brain JSON Error] Invalid Envelope format: {ve}')
+                except Exception as e:
+                    print(f'[Brain Processing Error] {e}')
+                    # 嘗試發送錯誤訊號至 Thought 頻道
+                    try:
+                        temp_data = json.loads(raw_data)
+                        temp_trace = temp_data.get('trace_id', 'unknown')
+                        bus.publish_envelope(NexusEnvelope(
+                            source="brain:worker",
+                            type=MessageType.THOUGHT,
+                            trace_id=temp_trace,
+                            payload={"state": "error", "reasoning": str(e)}
+                        ))
+                    except: pass
+        except Exception as bus_err:
+            print(f'[Bus Error] {bus_err}')
         
-        await asyncio.sleep(0.1) # 避免 CPU 消耗過高
+        await asyncio.sleep(0.05)
 
 if __name__ == '__main__':
     asyncio.run(run_brain_worker())

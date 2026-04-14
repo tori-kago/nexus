@@ -6,8 +6,10 @@ import operator
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from src.brain.factory import get_brain_model
+from src.shared.bus import MessageBus
+from src.shared.schemas import NexusEnvelope, MessageType
 
-# --- 1. Vault Manager: 負責 Markdown 檔案讀寫 ---
+# --- 1. Vault Manager (保持原樣) ---
 class VaultManager:
     def __init__(self, base_path: str = "src/brain/vault"):
         self.base_path = base_path
@@ -81,7 +83,7 @@ class VaultManager:
                 f.write(f"### {prefix} ({datetime.now().strftime('%H:%M:%S')})\n")
                 f.write(f"{m.content}\n\n")
 
-# --- 2. Context Assembler: 負責組裝 System Prompt ---
+# --- 2. Context Assembler (保持原樣) ---
 class ContextAssembler:
     def __init__(self, vault: VaultManager):
         self.vault = vault
@@ -117,24 +119,39 @@ class ContextAssembler:
 # --- 3. 定義狀態與邏輯節點 ---
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
+    trace_id: str  # 新增：追蹤 ID
 
 class BrainLogic:
     def __init__(self):
         self.model = get_brain_model()
         self.vault = VaultManager()
         self.assembler = ContextAssembler(self.vault)
+        self.bus = MessageBus() # 注入 Bus 用於發送狀態
+
+    def _notify(self, trace_id: str, state: str, reasoning: str):
+        """發送 Thought 訊號 (無靜默回覆)"""
+        envelope = NexusEnvelope(
+            source="brain:logic",
+            type=MessageType.THOUGHT,
+            trace_id=trace_id,
+            payload={"state": state, "reasoning": reasoning}
+        )
+        self.bus.publish_envelope(envelope)
 
     def call_model(self, state: AgentState):
-        # 1. 組裝動態 System Prompt
+        # 1. 發送正在思考的訊號
+        self._notify(state['trace_id'], "thinking", "正在檢索記憶並組裝 Prompt...")
+        
+        # 2. 組裝動態 System Prompt
         system_prompt = self.assembler.assemble()
         
-        # 2. 準備完整的訊息列表 (System + History)
+        # 3. 準備完整的訊息列表 (System + History)
         full_messages = [SystemMessage(content=system_prompt)] + state['messages']
         
-        # 3. 呼叫模型
+        # 4. 呼叫模型
         response = self.model.invoke(full_messages)
         
-        # 4. 記錄對話 (僅記錄最後一輪)
+        # 5. 記錄對話 (僅記錄最後一輪)
         self.vault.write_log([state['messages'][-1], response])
         
         return {"messages": [response]}
@@ -148,12 +165,13 @@ class BrainLogic:
         user_matches = re.findall(r"\[REFLECT:USER\] (.*)", content)
         memory_matches = re.findall(r"\[REFLECT:MEMORY\] (.*)", content)
         
+        if user_matches or memory_matches:
+            self._notify(state['trace_id'], "reflecting", f"發現了 {len(user_matches)} 個用戶事實與 {len(memory_matches)} 個項目記憶，正在更新 Vault...")
+        
         for fact in user_matches:
-            print(f"[Brain] Reflecting User Fact: {fact}")
             self.vault.append_to_file("user", "溝通偏好", fact)
             
         for fact in memory_matches:
-            print(f"[Brain] Reflecting Memory Fact: {fact}")
             self.vault.append_to_file("memory", "當前階段", fact)
             
         return state
