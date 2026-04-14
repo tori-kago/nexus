@@ -25,9 +25,11 @@ async def run_brain_worker():
                 input_data = json.loads(message['data'])
                 user_text = input_data.get('message', '')
                 
+                print(f'[Brain] Thinking about: {user_text}')
+                r.publish('nexus.thought', json.dumps({"thought": f"Thinking about: {user_text}"}))
+                
                 # 調用 LangGraph 大腦思考
                 # 這裡使用 invoke 並傳入初始狀態
-                # 因為是 Demo，這裡還沒加入真正的對話持久化 (如 SQLite Checkpointer)
                 result = graph.invoke({"messages": [HumanMessage(content=user_text)]})
                 
                 # 獲取模型最後的回覆
@@ -37,9 +39,14 @@ async def run_brain_worker():
                 # 將回覆推送到 Redis
                 response_payload = {"response": response_text}
                 r.publish('nexus.text', json.dumps(response_payload))
+                
+                # 發布反射結果到 Thought 頻道供監控
+                r.publish('nexus.thought', json.dumps({"thought": f"Replied and reflected. Response len: {len(response_text)}"}))
+                
                 print(f'[Brain] Replied: {response_text[:50]}...')
             except Exception as e:
                 print(f'[Brain Error] {e}')
+                r.publish('nexus.thought', json.dumps({"thought": f"Error: {str(e)}", "level": "error"}))
         
         await asyncio.sleep(0.1) # 避免 CPU 消耗過高
 

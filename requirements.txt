@@ -7,3 +7,4 @@ websockets
 requests
 langchain
 langgraph
+python-telegram-bot
