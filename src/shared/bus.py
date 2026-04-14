@@ -39,6 +39,7 @@ CHANNELS = {
     'AUDIO_IN': 'nexus.audio_in',
     'THOUGHT': 'nexus.thought',
     'TEXT': 'nexus.text',
+    'AUDIO': 'nexus.audio',
     'COMMAND': 'nexus.command',
     'SYSTEM': 'nexus.system'
 }

@@ -90,30 +90,41 @@ class NexusTelegramBot:
     async def ws_listener(self):
         """從 WebSocket 接收 Nexus 回覆並轉發至 Telegram"""
         print(f"[TG] Connecting to WebSocket: {WS_URL}")
-        try:
-            async with websockets.connect(WS_URL) as websocket:
-                while True:
-                    message = await websocket.recv()
-                    try:
-                        envelope = json.loads(message)
-                        payload = envelope.get("payload", {})
-                        content = payload.get("content", "")
-                        session_id = envelope.get("session_id")
-                        
-                        if not content: continue
-                        
-                        # 定向發送：優先發給 session_id，若無則發給主人
-                        target_id = int(session_id) if (session_id and session_id.isdigit()) else self.master_chat_id
-                        
-                        if target_id:
-                            await self.app.bot.send_message(chat_id=target_id, text=content)
-                            print(f"[TG] Sent to {target_id}: {content[:20]}...")
-                                
-                    except Exception as e:
-                        print(f"[TG WS Error] {e}")
-        except Exception as e:
-            print(f"[TG WS Connection Error] {e}")
-            await asyncio.sleep(5) 
+        while True:
+            try:
+                async with websockets.connect(WS_URL) as websocket:
+                    while True:
+                        message = await websocket.recv()
+                        try:
+                            envelope = json.loads(message)
+                            msg_type = envelope.get("type")
+                            payload = envelope.get("payload", {})
+                            session_id = envelope.get("session_id")
+                            
+                            # 定向發送：優先發給 session_id，若無則發給主人
+                            target_id = int(session_id) if (session_id and session_id.isdigit()) else self.master_chat_id
+                            if not target_id: continue
+
+                            # 處理文字訊息
+                            if msg_type == "text":
+                                content = payload.get("content", "")
+                                if content:
+                                    await self.app.bot.send_message(chat_id=target_id, text=content)
+                                    print(f"[TG] Sent Text to {target_id}")
+
+                            # 處理語音訊息 (🆕 新增)
+                            elif msg_type == "audio":
+                                audio_url = payload.get("url")
+                                if audio_url and os.path.exists(audio_url):
+                                    with open(audio_url, 'rb') as voice:
+                                        await self.app.bot.send_voice(chat_id=target_id, voice=voice)
+                                    print(f"[TG] Sent Voice to {target_id}: {audio_url}")
+                                    
+                        except Exception as e:
+                            print(f"[TG WS Message Process Error] {e}")
+            except Exception as e:
+                print(f"[TG WS Connection Error] {e}")
+                await asyncio.sleep(5) # 斷線重連
 
     async def startup_notify(self):
         """啟動時向主人報到"""

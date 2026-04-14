@@ -8,6 +8,7 @@ class MessageType(str, Enum):
     INPUT = "input"
     THOUGHT = "thought"
     TEXT = "text"
+    AUDIO = "audio"
     COMMAND = "command"
     SYSTEM = "system"
 
@@ -39,6 +40,12 @@ class TextPayload(BaseModel):
     content: str
     emotion: str = "neutral"
     tts_url: Optional[str] = None
+
+class AudioPayload(BaseModel):
+    url: str
+    format: str = "wav"
+    content: Optional[str] = None
+    emotion: Optional[str] = None
 
 class CommandPayload(BaseModel):
     action: str
