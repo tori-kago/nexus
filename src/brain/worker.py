@@ -34,14 +34,16 @@ async def run_brain_worker():
                         input_envelope = NexusEnvelope.parse_raw(raw_data)
                         
                     trace_id = input_envelope.trace_id
+                    session_id = input_envelope.session_id
                     user_text = input_envelope.payload.get('content', '')
                     
-                    print(f'[Brain] 📥 Received Trace: {trace_id} | Input: {user_text[:30]}...')
+                    print(f'[Brain] 📥 Received Trace: {trace_id} | Session: {session_id} | Input: {user_text[:30]}...')
                     
                     # 調用 LangGraph 大腦思考
                     initial_state = {
                         "messages": [HumanMessage(content=user_text)],
-                        "trace_id": trace_id
+                        "trace_id": trace_id,
+                        "session_id": session_id
                     }
                     
                     # 使用 to_thread 避免阻塞事件循環 (graph.invoke 通常是同步的)
@@ -51,14 +53,27 @@ async def run_brain_worker():
                     last_message = result['messages'][-1]
                     response_text = last_message.content
                     
+                    # --- 🆕 解析情緒與清理內容 ---
+                    import re
+                    emotion = "focused" # 預設
+                    emotion_match = re.search(r"\[EMOTION: (.*?)\]", response_text)
+                    if emotion_match:
+                        emotion = emotion_match.group(1).lower().strip()
+                    
+                    # 移除所有標記標籤 (EMOTION, REFLECT) 避免用戶看到
+                    clean_content = re.sub(r"\[EMOTION: .*?\]", "", response_text)
+                    clean_content = re.sub(r"\[REFLECT:.*?\] (.*)", "", clean_content)
+                    clean_content = clean_content.strip()
+                    
                     # 將回覆封裝為 Envelope 並發布
                     output_envelope = NexusEnvelope(
                         source="brain:worker",
                         type=MessageType.TEXT,
                         trace_id=trace_id,
+                        session_id=session_id,
                         payload={
-                            "content": response_text,
-                            "emotion": "focused"
+                            "content": clean_content,
+                            "emotion": emotion
                         }
                     )
                     bus.publish_envelope(output_envelope)

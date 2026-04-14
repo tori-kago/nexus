@@ -104,22 +104,25 @@ class ContextAssembler:
 
 ## 運作指令 (Operational Instructions)
 1. 始終保持 Nexus 的性格與說話風格。
-2. 優先參考上述記憶與事實進行回覆。
-3. **反思機制**: 
-   如果你發現新的「用戶偏好」或「項目事實」，請在回覆最後一行加上以下標記：
+2. **說話非常簡潔，優先使用顏文字 (Kaomoji) 來表達感受。**
+3. 優先參考上述記憶與事實進行回覆。
+4. **情緒標記**: 
+   請在回覆內容中展現豐富的情感，並在回覆的最後一行加上：
+   [EMOTION: 類型]
+   可用類型包括：happy, curious, excited, warm, focused, sad, neutral。
+5. **反思機制**: 
+   如果你發現新的「用戶偏好」或「項目事實」，請在 [EMOTION] 標記之後加上：
    [REFLECT:USER] (描述新的用戶偏好)
    或
    [REFLECT:MEMORY] (描述新的項目事實)
-   範例 (僅供參考格式)：
-   [REFLECT:USER] (在此處描述新的用戶偏好)
-   [REFLECT:MEMORY] (在此處描述新的項目事實)
 """
         return prompt
 
 # --- 3. 定義狀態與邏輯節點 ---
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
-    trace_id: str  # 新增：追蹤 ID
+    trace_id: str  # 追蹤 ID
+    session_id: Optional[str] # 訊息 Session ID (例如 TG Chat ID)
 
 class BrainLogic:
     def __init__(self):
@@ -128,19 +131,20 @@ class BrainLogic:
         self.assembler = ContextAssembler(self.vault)
         self.bus = MessageBus() # 注入 Bus 用於發送狀態
 
-    def _notify(self, trace_id: str, state: str, reasoning: str):
+    def _notify(self, trace_id: str, session_id: Optional[str], state: str, reasoning: str):
         """發送 Thought 訊號 (無靜默回覆)"""
         envelope = NexusEnvelope(
             source="brain:logic",
             type=MessageType.THOUGHT,
             trace_id=trace_id,
+            session_id=session_id,
             payload={"state": state, "reasoning": reasoning}
         )
         self.bus.publish_envelope(envelope)
 
     def call_model(self, state: AgentState):
         # 1. 發送正在思考的訊號
-        self._notify(state['trace_id'], "thinking", "正在檢索記憶並組裝 Prompt...")
+        self._notify(state['trace_id'], state.get('session_id'), "thinking", "正在檢索記憶並組裝 Prompt...")
         
         # 2. 組裝動態 System Prompt
         system_prompt = self.assembler.assemble()
@@ -166,7 +170,7 @@ class BrainLogic:
         memory_matches = re.findall(r"\[REFLECT:MEMORY\] (.*)", content)
         
         if user_matches or memory_matches:
-            self._notify(state['trace_id'], "reflecting", f"發現了 {len(user_matches)} 個用戶事實與 {len(memory_matches)} 個項目記憶，正在更新 Vault...")
+            self._notify(state['trace_id'], state.get('session_id'), "reflecting", f"發現了 {len(user_matches)} 個用戶事實與 {len(memory_matches)} 個項目記憶，正在更新 Vault...")
         
         for fact in user_matches:
             self.vault.append_to_file("user", "溝通偏好", fact)

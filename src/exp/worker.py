@@ -28,9 +28,14 @@ async def run_exp_worker():
                 session_id = envelope_data.get('session_id')
                 payload = envelope_data.get('payload', {})
                 text_content = payload.get('content', '')
+                emotion = payload.get('emotion', '')
                 
-                # 處理表情與指令
+                # 1. 處理文字中的表情與指令
                 commands = engine.process(text_content)
+                
+                # 2. 🆕 如果 payload 有 emotion，也將其加入指令流
+                if emotion and emotion != "focused": # focused 是預設，可以選擇性忽略或轉化
+                    commands.append({"type": "expression", "value": emotion})
                 
                 for cmd in commands:
                     # 封裝為 NUP Command 封包
