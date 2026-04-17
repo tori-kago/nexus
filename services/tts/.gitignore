@@ -1,0 +1,16 @@
+# 忽略虛擬環境
+venv_sovits/
+.venv/
+
+# 忽略大型模型檔案
+*.pth
+*.ckpt
+*.onnx
+
+# 忽略參考音訊
+reference_audio/
+temp/
+
+# 訓練產出的日誌與中間文件
+logs/
+output/
