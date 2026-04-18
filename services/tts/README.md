@@ -62,3 +62,14 @@ python services/tts/fish_client.py
 
 ---
 Nexus 的聲音會比以前更動聽唷~ (｡･ω･｡)ﾉ♡
+
+
+
+curl -X POST http://100.124.61.26:50000/v1/audio/speech \
+-H "Content-Type: application/json" \
+-d '{
+    "model": "cosyvoice",
+    "input": "你好，我是 Nexus，語音引擎測試中。",
+    "voice": "chinese_female"
+    }' \
+    --output test_voice.mp3

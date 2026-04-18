@@ -2,12 +2,13 @@ services:
   cosyvoice:
     image: neosun/cosyvoice:latest
     container_name: nexus-tts-cosyvoice
+    platform: linux/amd64
     ports:
-      - "50000:8188" # 將內部 8188 對接到外部 50000
+      - "50000:8188"
     volumes:
       - ./outputs:/data/voices
     restart: always
     deploy:
       resources:
         limits:
-          memory: 8G
+          memory: 12G
