@@ -26,15 +26,15 @@ def trim_audio(input_path, output_path, start_sec=0, end_sec=20):
 if __name__ == "__main__":
     # 預設參數，你可以根據需要修改
     # 假設你的原始長音檔放在 reference_audio/long_audio.wav
-    source = "reference_audio/nexus.wav" 
-    target = "reference_audio/test_ref.wav"
+    source = "test_ref.wav" 
+    target = "test_ref_7.wav"
     
     # 如果有提供命令行參數
     if len(sys.argv) > 1:
         source = sys.argv[1]
     
     if os.path.exists(source):
-        trim_audio(source, target, start_sec=20, end_sec=40)
+        trim_audio(source, target, start_sec=0, end_sec=7)
     else:
         print(f"💡 請將你的 3 分鐘音檔放在 {source}")
         print(f"或者執行: python services/tts/trim_audio.py <你的音檔路徑>")
