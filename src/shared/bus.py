@@ -41,5 +41,7 @@ CHANNELS = {
     'TEXT': 'nexus.text',
     'AUDIO': 'nexus.audio',
     'COMMAND': 'nexus.command',
-    'SYSTEM': 'nexus.system'
+    'SYSTEM': 'nexus.system',
+    'HEARTBEAT': 'nexus.heartbeat',
+    'OBSERVATION': 'nexus.observation'
 }

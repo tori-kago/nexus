@@ -80,3 +80,47 @@ python -m tests.test_nup_flow
 - **多端同步**: 確保在 Telegram 的對話內容能同步出現在已啟動的 `cli_console` 中（基於 `session_id` 廣播）。
 
 
+
+
+---
+
+  🚀 啟動與測試方式
+  請在專案根目錄 (/home/m2root/henry/nexus) 執行以下步驟：
+
+  1. 環境準備
+  確保 Redis 服務已啟動：
+
+   1 # 如果使用 docker-compose
+   2 docker-compose -f infra/docker-compose.yml up -d redis
+
+  2. 啟動大腦 (Brain Worker)
+  這會啟動新的推理引擎，並監聽輸入與心跳。
+
+   1 export PYTHONPATH=$PYTHONPATH:.
+   2 python3 src/brain/worker.py
+
+  3. 啟動心跳發送器 (Heartbeat - 另開視窗)
+  這會每 5 分鐘發送一次 tick，您可以在 Worker 視窗看到 [HEARTBEAT] 訊號。
+
+   1 export PYTHONPATH=$PYTHONPATH:.
+   2 python3 src/brain/heartbeat.py
+
+  4. 執行自主循環測試腳本 (另開視窗)
+  我為您準備了一個 tests/test_reasoning_loop.py，它會發送一個需要「記憶事實」與「鼓勵」的複合請求，您可以觀察 AI 如何進行多步思考。
+
+   1 export PYTHONPATH=$PYTHONPATH:.
+   2 python3 tests/test_reasoning_loop.py
+
+  測試腳本預期輸出範例：
+
+   1 [*] Sending test input... Trace: test-xxx
+   2 [*] Waiting for thoughts and final reply...
+   3   [Thought] starting: 開始處理用戶輸入: 我最近很累，而且我決定明天要去爬山...
+   4   [Thought] thinking: 用戶明天要去爬山，這是一個重要的項目進展，我應該記在 memory.md 裡。
+   5   [Thought] observation: Observation: 項目記憶已成功更新至 Vault。
+   6   [Thought] thinking: 記憶已更新，現在我需要給用戶一點溫暖的鼓勵，並使用顏文字。
+   7
+   8 [Nexus Final Reply] (happy)
+   9 Content: 辛苦了喵！累了就要好好休息喔 (´꒳`) 既然明天要去爬山，Nexus 會幫你加油的！一定要注意安全喔 ~ [EMOTION: happy]
+
+  您也可以隨時檢查 src/brain/vault/context/memory.md，確認 AI 是否真的自主執行了 REFLECT 動作。

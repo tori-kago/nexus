@@ -1,1 +1,7 @@
-# Project Memory\n\n## 當前階段\n- 系統正在重新開機，等待與 maocao 的全新對話。
+# Project Memory
+
+## 當前階段
+- 系統正在重新開機，等待與 maocao 的全新對話。
+
+## 項目歷史摘要
+- 目前尚無歷史記錄。

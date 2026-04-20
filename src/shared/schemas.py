@@ -11,6 +11,8 @@ class MessageType(str, Enum):
     AUDIO = "audio"
     COMMAND = "command"
     SYSTEM = "system"
+    HEARTBEAT = "heartbeat"
+    OBSERVATION = "observation"
 
 class NexusEnvelope(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
