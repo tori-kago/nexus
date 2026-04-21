@@ -4,6 +4,7 @@ import asyncio
 import uuid
 import re
 import requests
+import hashlib
 from typing import Optional
 
 try:
@@ -49,16 +50,11 @@ class ElevenLabsTTSAdapter:
         except Exception: return False
 
 class AzureTTSAdapter:
-    """
-    Azure TTS 適配器 - 具備情緒、韻律 (Prosody) 與降級保護。
-    """
     def __init__(self):
         self.key = os.getenv("AZURE_SPEECH_KEY")
         self.region = os.getenv("AZURE_SPEECH_REGION", "eastus")
         self.voice = os.getenv("AZURE_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
         self.enabled = bool(self.key and speechsdk)
-        
-        # 定義不同情緒的韻律參數 (速度, 音調)
         self.style_config = {
             "gentle": {"style": "whispering", "rate": "-10%", "pitch": "-5%"},
             "cheerful": {"style": "cheerful", "rate": "+15%", "pitch": "+10%"},
@@ -69,10 +65,7 @@ class AzureTTSAdapter:
 
     async def generate(self, text: str, emotion: str, output_path: str) -> bool:
         if not self.enabled: return False
-        
         config = self.style_config.get(emotion, self.style_config["neutral"])
-        
-        # 僅在此時包裝成 SSML，不影響外部文字
         ssml = f"""
         <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' 
                xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='zh-CN'>
@@ -85,29 +78,20 @@ class AzureTTSAdapter:
             </voice>
         </speak>
         """
-        
         try:
             speech_config = speechsdk.SpeechConfig(subscription=self.key, region=self.region)
             audio_config = speechsdk.audio.AudioOutputConfig(filename=output_path)
             synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
-            
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, lambda: synthesizer.speak_ssml_async(ssml).get())
-            
-            if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-                logger.info(f"Azure TTS: Success style={config['style']} rate={config['rate']}")
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"Azure TTS Exception: {e}")
-            return False
+            return result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted
+        except Exception: return False
 
 class EdgeTTSAdapter:
     def __init__(self):
         self.voice = os.getenv("EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
 
     async def generate(self, text: str, output_path: str) -> bool:
-        # 降級層只接收純文字，保證安全
         if not edge_tts: return False
         try:
             communicate = edge_tts.Communicate(text, self.voice)
@@ -116,24 +100,52 @@ class EdgeTTSAdapter:
         except Exception: return False
 
 class HybridTTSAdapter(IMediaAdapter):
+    """
+    具有快取機制的混合 TTS 適配器。
+    """
     def __init__(self):
         self.eleven = ElevenLabsTTSAdapter()
         self.azure = AzureTTSAdapter()
         self.edge = EdgeTTSAdapter()
         self.output_dir = "src/brain/vault/temp_tts"
+        self.cache_dir = "src/brain/vault/cache_tts"
         os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.cache_dir, exist_ok=True)
+
+    def _get_cache_path(self, text: str, emotion: str) -> str:
+        """根據文字與情緒內容計算 Hash 作為快取鍵"""
+        hash_key = hashlib.mdsize(f"{text}_{emotion}".encode()).hexdigest()
+        return os.path.join(self.cache_dir, f"{hash_key}.mp3")
 
     async def text_to_speech(self, text: str, emotion: str = "neutral") -> str:
         speech_text = clean_text_for_speech(text)
         if not speech_text: return ""
         
-        filename = f"{uuid.uuid4()}.mp3"
-        output_path = os.path.join(self.output_dir, filename)
+        # 1. 檢查快取 (對於常用短語極其有效)
+        # 這裡為了簡單，我們先用 hashlib.md5
+        hash_key = hashlib.md5(f"{speech_text}_{emotion}".encode()).hexdigest()
+        cache_path = os.path.join(self.cache_dir, f"{hash_key}.mp3")
         
-        # 分層降級：每層都只獲取必要的資訊，互不干擾
-        if await self.eleven.generate(speech_text, output_path): return output_path
-        if await self.azure.generate(speech_text, emotion, output_path): return output_path
-        if await self.edge.generate(speech_text, output_path): return output_path
+        if os.path.exists(cache_path):
+            logger.info(f"TTS Cache Hit: {speech_text[:10]}...")
+            return cache_path
+        
+        # 2. 如果沒快取，則生成新音訊
+        temp_filename = f"{uuid.uuid4()}.mp3"
+        output_path = os.path.join(self.output_dir, temp_filename)
+        
+        success = False
+        if await self.eleven.generate(speech_text, output_path): success = True
+        elif await self.azure.generate(speech_text, emotion, output_path): success = True
+        elif await self.edge.generate(speech_text, output_path): success = True
+        
+        if success:
+            # 將產出的檔案複製到快取目錄
+            import shutil
+            os.makedirs(self.cache_dir, exist_ok=True)
+            shutil.copy(output_path, cache_path)
+            return output_path
+            
         return ""
 
     async def speech_to_text(self, audio_data: bytes) -> str: return ""
