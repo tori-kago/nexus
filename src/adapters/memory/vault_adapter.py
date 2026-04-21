@@ -86,10 +86,13 @@ class VaultAdapter(IMemoryAdapter):
 
     async def digest_conversation(self, messages: List[Any], brain: Any):
         """
-        記憶消化 (LCM-style Compaction)。
-        將對話片段壓縮為 1-2 條關鍵事實並存入 memory.md。
+        記憶消化 (LCM-style Compaction)。執行前建立快照保護。
         """
-        if len(messages) < 4: return # 訊息太少不需要消化
+        if len(messages) < 4: return
+        
+        # --- 健壯性防護：建立消化前快照 ---
+        from src.adapters.tool.resilience_utils import create_vault_snapshot
+        create_vault_snapshot("Before memory digestion")
         
         # 1. 準備摘要 Prompt
         history_text = ""

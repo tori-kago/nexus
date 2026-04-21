@@ -1,6 +1,7 @@
 import os
 import glob
 from typing import List, Optional
+from src.adapters.tool.resilience_utils import create_vault_snapshot, rollback_vault
 
 # 安全路徑限制：僅限 Nexus 專案目錄
 ALLOWED_BASE = "/home/m2root/henry/nexus/"
@@ -12,7 +13,6 @@ def _is_safe_path(path: str) -> bool:
     if any(part in abs_path for part in sensitive_parts): return False
     return True
 
-# --- 既有技能 (略) ---
 def list_nexus_files(directory: str = ".") -> str:
     if not _is_safe_path(directory): return "Error: Access Denied."
     try:
@@ -44,17 +44,11 @@ def get_recent_logs(lines: int = 50) -> str:
             return "".join(tail)
     except Exception as e: return str(e)
 
-# --- 新增技能：自我設定 ---
 def update_env_config(key: str, value: str) -> str:
     """
-    自動更新 .env 檔案中的 API 金鑰或配置。
-    這能讓你幫助用戶完成系統設定，例如設定 ELEVENLABS_API_KEY。
-    :param key: 設定項名稱 (例如 ELEVENLABS_API_KEY)
-    :param value: 新的設定值
+    自動更新 .env 檔案中的 API 金鑰或配置。執行前會建立備份快照。
     """
     env_path = os.path.join(ALLOWED_BASE, ".env")
-    
-    # 支援的 Key 清單 (安全白名單)
     allowed_keys = [
         "AZURE_SPEECH_KEY", "AZURE_SPEECH_REGION", "AZURE_TTS_VOICE",
         "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID",
@@ -62,7 +56,10 @@ def update_env_config(key: str, value: str) -> str:
     ]
     
     if key not in allowed_keys:
-        return f"錯誤：不允許透過此工具修改 '{key}'。安全性考量，目前僅支援設定 API 金鑰。"
+        return f"錯誤：不允許修改 '{key}'。"
+
+    # --- 關鍵防護：執行前建立快照 ---
+    create_vault_snapshot(f"Before updating env config: {key}")
 
     try:
         lines = []
@@ -80,14 +77,20 @@ def update_env_config(key: str, value: str) -> str:
                 new_lines.append(line)
         
         if not found:
-            # 如果是新的 Key，確保檔案結尾有換行
-            if new_lines and not new_lines[-1].endswith("\n"):
-                new_lines[-1] += "\n"
+            if new_lines and not new_lines[-1].endswith("\n"): new_lines[-1] += "\n"
             new_lines.append(f"{key}={value}\n")
             
         with open(env_path, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
             
-        return f"成功：已將 {key} 更新至 .env 檔案。請重啟服務以生效。"
+        return f"成功：已將 {key} 更新至 .env。快照已建立。"
     except Exception as e:
         return f"更新失敗: {str(e)}"
+
+# 將回滾邏輯也包裝成技能
+def restore_nexus_snapshot() -> str:
+    """
+    將系統的記憶、日誌與配置回滾到上一個自動快照狀態。
+    當你發現最近的修改或設定有誤時，可以使用此技能。
+    """
+    return rollback_vault()

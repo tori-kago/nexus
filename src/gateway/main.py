@@ -12,12 +12,12 @@ from src.core.orchestrator import NexusOrchestrator
 from src.adapters.brain.gemini_cli_adapter import GeminiCLIBrainAdapter
 from src.adapters.memory.vault_adapter import VaultAdapter
 from src.adapters.tool.python_tool_adapter import PythonToolAdapter
-from src.adapters.tool.base_skills import list_nexus_files, read_nexus_file, get_recent_logs, update_env_config
+from src.adapters.tool.base_skills import list_nexus_files, read_nexus_file, get_recent_logs, update_env_config, restore_nexus_snapshot
 from src.adapters.media.hybrid_stt_adapter import HybridSTTAdapter
 from src.adapters.media.hybrid_tts_adapter import HybridTTSAdapter
 from langchain_core.messages import HumanMessage, AIMessage
 
-app = FastAPI(title='Nexus Gateway (Self-Config Enabled v3.5)')
+app = FastAPI(title='Nexus Gateway (Ultra-Resilient v3.6)')
 
 # 配置靜態目錄
 TEMP_TTS_DIR = "src/brain/vault/temp_tts"
@@ -36,7 +36,8 @@ tool_adapter.register_tool("get_system_time", "獲取主機目前時間", lambda
 tool_adapter.register_tool("list_nexus_files", "查看專案目錄結構", list_nexus_files)
 tool_adapter.register_tool("read_nexus_file", "讀取專案檔案內容", read_nexus_file)
 tool_adapter.register_tool("get_recent_logs", "獲取系統日誌", get_recent_logs)
-tool_adapter.register_tool("update_env_config", "更新系統設定與 API 金鑰 (例如設定 ELEVENLABS_API_KEY)。", update_env_config)
+tool_adapter.register_tool("update_env_config", "更新系統設定與 API 金鑰。", update_env_config)
+tool_adapter.register_tool("restore_nexus_snapshot", "回滾記憶與配置到上一個穩定快照。", restore_nexus_snapshot)
 
 sessions: Dict[str, List[Any]] = {}
 
