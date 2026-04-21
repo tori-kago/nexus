@@ -1,15 +1,18 @@
 fastapi[all]
-redis
+uvicorn
+websockets
+pydantic
 pydantic-settings
 loguru
 rich
-websockets
-requests
-# langchain
-# langgraph
-python-telegram-bot
+langchain-core
 python-dotenv
+# 語音辨識 (STT)
 faster-whisper
+# 語音合成 (TTS)
+edge-tts
 pydub
-audioop-lts
-asyncio
+# Azure 語音服務 (主力感官)
+azure-cognitiveservices-speech
+# 第三方精品語音
+requests
