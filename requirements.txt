@@ -5,8 +5,8 @@ loguru
 rich
 websockets
 requests
-langchain
-langgraph
+# langchain
+# langgraph
 python-telegram-bot
 python-dotenv
 faster-whisper
