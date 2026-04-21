@@ -11,6 +11,7 @@ def test_reasoning_loop():
     # 1. 訂閱 TEXT 與 THOUGHT 頻道以觀察輸出
     p = r.pubsub()
     p.subscribe(CHANNELS['TEXT'], CHANNELS['THOUGHT'])
+    time.sleep(0.5) # 確保訂閱生效
     
     trace_id = f"test-{uuid.uuid4()}"
     
@@ -25,12 +26,12 @@ def test_reasoning_loop():
     )
     
     print(f"[*] Sending test input... Trace: {trace_id}")
-    r.publish(CHANNELS['INPUT'], input_envelope.json())
+    r.publish(CHANNELS['INPUT'], input_envelope.model_dump_json())
     
     # 3. 監聽回饋
     print("[*] Waiting for thoughts and final reply...")
     start_time = time.time()
-    while time.time() - start_time < 30: # 等待 30 秒
+    while time.time() - start_time < 60: # 增加到 60 秒，給 LLM 充足時間
         message = p.get_message(ignore_subscribe_messages=True)
         if message:
             data = json.loads(message['data'])

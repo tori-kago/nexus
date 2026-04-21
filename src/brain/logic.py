@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import asyncio
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
@@ -8,7 +9,7 @@ from src.brain.factory import get_brain_model
 from src.shared.bus import MessageBus
 from src.shared.schemas import NexusEnvelope, MessageType
 
-# --- 1. Vault Manager (Enhanced with Compression) ---
+# --- 1. Vault Manager (Search & Compression) ---
 class VaultManager:
     def __init__(self, base_path: str = "src/brain/vault"):
         self.base_path = base_path
@@ -26,11 +27,23 @@ class VaultManager:
                 return f.read()
         return ""
 
-    def update_file(self, key: str, content: str):
-        path = self.paths.get(key)
-        if path:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
+    def search_keyword(self, keyword: str) -> str:
+        """跨檔案搜尋包含關鍵字的章節"""
+        files_to_search = ["user", "memory"]
+        results = []
+        
+        for key in files_to_search:
+            content = self.read_file(key)
+            if not content: continue
+            
+            # 按章節 (##) 分割
+            sections = re.split(r"(?=## )", content)
+            for sec in sections:
+                if keyword.lower() in sec.lower():
+                    # 提取檔名作為來源標記
+                    results.append(f"來自 {key}.md:\n{sec.strip()}")
+        
+        return "\n\n---\n\n".join(results) if results else ""
 
     def append_to_file(self, key: str, section: str, line: str):
         path = self.paths.get(key)
@@ -74,10 +87,11 @@ class VaultManager:
             for m in messages:
                 prefix = "User" if isinstance(m, HumanMessage) else "Nexus"
                 f.write(f"### {prefix} ({datetime.now().strftime('%H:%M:%S')})\n")
-                f.write(f"{m.content}\n\n")
+                content = m.content if isinstance(m.content, str) else str(m.content)
+                f.write(f"{content}\n\n")
 
     def compress_logs(self, model):
-        """檢查當日日誌是否過長，若過長則進行壓縮並存入 memory.md"""
+        """日誌壓縮邏輯"""
         today = datetime.now().strftime("%Y-%m-%d")
         log_path = os.path.join(self.paths["logs"], f"{today}.md")
         
@@ -87,79 +101,57 @@ class VaultManager:
         with open(log_path, "r", encoding="utf-8") as f:
             content = f.read()
             
-        if len(content) > 3000: # 假設超過 3000 字元即觸發壓縮
-            print(f"[Vault] Log too long ({len(content)} chars), compressing...")
-            prompt = f"以下是今天的對話日誌，請將其總結為 3-5 條關鍵事實或項目進展，僅輸出以 '- ' 開頭的列表內容：\n\n{content}"
+        if len(content) > 1000:
+            print(f"[Vault] Log reached {len(content)} chars, triggering smart compression...")
+            prompt = f"請摘要以下日誌為 3 條關鍵記憶條目：\n\n{content}"
             summary = model.invoke([HumanMessage(content=prompt)]).content
             
-            # 存入 memory.md 的「歷史摘要」章節
             for line in summary.split("\n"):
                 if line.strip().startswith("-"):
                     self.append_to_file("memory", "項目歷史摘要", line.strip()[2:])
             
-            # 存檔舊日誌並清空
-            archive_path = log_path + ".bak"
+            archive_path = log_path + f".{int(datetime.now().timestamp())}.bak"
             os.rename(log_path, archive_path)
-            print(f"[Vault] Compressed and archived to {archive_path}")
+            print(f"[Vault] Compression complete.")
 
-# --- 2. Context Assembler (Enhanced with Dynamic Injection) ---
+# --- 2. Context Assembler (Agentic Prompting) ---
 class ContextAssembler:
     def __init__(self, vault: VaultManager):
         self.vault = vault
 
-    def assemble(self, needs: List[str] = None) -> str:
+    def assemble(self, is_proactive: bool = False) -> str:
         soul = self.vault.read_file("soul")
         
-        # 動態注入逻辑
-        user_content = self.vault.read_file("user")
-        memory_content = self.vault.read_file("memory")
-        
-        # 如果有特定需求，可以進一步過濾 (目前簡化為全量，但預留接口)
-        if needs:
-            # 這裡未來可以實作更複雜的 RAG 或標籤過濾
-            pass
-
         prompt = f"""
 {soul}
 
-## 當前用戶背景 (User Context)
-{user_content}
+## 核心運作規約 (Reasoning Protocol)
+1. 你現在處於「自主思考循環」中。
+2. 你對用戶背景與項目事實的記憶是有限的，如果用戶提到的事情你不確定，**請務必先使用 SEARCH 動作**。
+3. **每一輪回覆中，你必須且只能輸出一個 [THOUGHT] 與一個 [ACTION]。**
 
-## 項目記憶與事實 (Project Memory)
-{memory_content}
-
-## 運作指令 (Reasoning Loop)
-1. 你現在處於一個「思考循環」中。
-2. 每一輪你必須選擇一個 Action 執行。
-3. 格式必須為:
-   [THOUGHT] (你的內心獨白，解釋為什麼選擇這個 Action)
-   [ACTION] 類型: 參數
 4. 可用 Action 類型:
-   - REPLY: (最終回覆給用戶，結束循環)
-   - REFLECT:USER: (紀錄用戶偏好)
-   - REFLECT:MEMORY: (紀錄項目事實)
-   - SEARCH: (目前的簡化版，你可以要求檢索更多 Vault 內容)
-5. 範例:
-   [THOUGHT] 用戶說他喜歡貓，我應該記下來。
-   [ACTION] REFLECT:USER: 用戶喜歡貓。
-   
-   (系統會回傳 Observation: 已紀錄)
-   
-   [THOUGHT] 紀錄完了，現在可以回覆他。
-   [ACTION] REPLY: 喵！我也很喜歡貓呢 (๑•̀ㅁ•́๑)✧ [EMOTION: happy]
+   - REPLY: (回覆用戶，結束循環。必須包含情緒標籤)
+   - SEARCH: (檢索記憶庫。參數為關鍵字，例如 SEARCH: 爬山。這是獲取背景資訊的首選方式)
+   - REFLECT_USER: (紀錄用戶偏好)
+   - REFLECT_MEMORY: (紀錄項目事實)
+   - THINK: (純推理)
+   - IGNORE: (僅在背景檢查時，若無須主動開口則使用)
 
-6. **情緒標記**: 在最終 REPLY 的結尾加上 [EMOTION: 類型]。
+5. 範例:
+   [THOUGHT] 用戶提到了「明天的事情」，我需要查一下記憶庫裡關於明天的計畫。
+   [ACTION] SEARCH: 明天
 """
         return prompt
 
-# --- 3. Brain Engine (Autonomous Reasoning Loop) ---
+# --- 3. Brain Engine (Agentic Reasoning Loop) ---
 class BrainEngine:
     def __init__(self):
         self.model = get_brain_model()
         self.vault = VaultManager()
         self.assembler = ContextAssembler(self.vault)
         self.bus = MessageBus()
-        self.max_steps = 5
+        self.max_steps = 6 # 增加步數以容納檢索過程
 
     def _notify(self, trace_id: str, session_id: Optional[str], state: str, reasoning: str):
         envelope = NexusEnvelope(
@@ -171,66 +163,78 @@ class BrainEngine:
         )
         self.bus.publish_envelope(envelope)
 
-    async def run(self, trace_id: str, session_id: str, user_input: str):
-        """核心推理循環"""
+    async def run(self, trace_id: str, session_id: str, user_input: str, is_proactive: bool = False):
+        if is_proactive:
+            time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+            input_msg = HumanMessage(content=f"[SYSTEM] 當前時間為 {time_str}。請進行背景反思：先 SEARCH 近期計畫，再決定是否需要主動提醒 maocao。")
+        else:
+            input_msg = HumanMessage(content=user_input)
+
         context = [
-            SystemMessage(content=self.assembler.assemble()),
-            HumanMessage(content=user_input)
+            SystemMessage(content=self.assembler.assemble(is_proactive)),
+            input_msg
         ]
         
-        self._notify(trace_id, session_id, "starting", f"開始處理用戶輸入: {user_input[:20]}...")
+        self._notify(trace_id, session_id, "starting", "大腦啟動並準備檢索...")
         
         final_reply = None
         
         for step in range(self.max_steps):
-            # 1. 呼叫模型
             try:
+                await asyncio.sleep(0.5)
                 response = self.model.invoke(context)
-                content = response.content
+                content = response.content.strip()
+                
+                # 清理
+                content = re.sub(r"```(markdown|text)?\n", "", content)
+                content = content.replace("```", "").strip()
+                
                 context.append(response)
                 
-                # 2. 解析 Thought & Action
-                thought_match = re.search(r"\[THOUGHT\] (.*)", content)
-                action_match = re.search(r"\[ACTION\] (.*?): (.*)", content)
+                thought_match = re.search(r"\[THOUGHT\]\s*(.*?)\s*(?=\[ACTION\]|$)", content, re.DOTALL)
+                action_match = re.search(r"\[ACTION\]\s*(.*?):\s*(.*)", content, re.DOTALL)
                 
-                thought = thought_match.group(1) if thought_match else "思考中..."
-                self._notify(trace_id, session_id, "thinking", thought)
+                thought = thought_match.group(1).strip() if thought_match else "分析中..."
+                self._notify(trace_id, session_id, "thinking", thought[:100])
                 
                 if not action_match:
-                    # 如果 AI 沒按格式出牌，強行回饋
-                    obs = "Error: Invalid format. Please use [THOUGHT] and [ACTION] labels."
+                    obs = "Error: 請使用 [ACTION] 標籤指定下一步動作。"
                 else:
-                    action_type = action_match.group(1).strip()
-                    action_param = action_match.group(2).strip()
+                    a_type = action_match.group(1).strip()
+                    a_param = action_match.group(2).strip()
                     
-                    # 3. 執行 Action
-                    if action_type == "REPLY":
-                        final_reply = action_param
+                    if a_type == "REPLY":
+                        final_reply = a_param
                         break
-                    elif action_type == "REFLECT:USER":
-                        self.vault.append_to_file("user", "溝通偏好", action_param)
-                        obs = "Observation: 用戶事實已成功更新至 Vault。"
-                    elif action_type == "REFLECT:MEMORY":
-                        self.vault.append_to_file("memory", "當前階段", action_param)
-                        obs = "Observation: 項目記憶已成功更新至 Vault。"
+                    elif a_type == "IGNORE":
+                        final_reply = "__IGNORE__"
+                        break
+                    elif a_type == "SEARCH":
+                        found_info = self.vault.search_keyword(a_param)
+                        if found_info:
+                            obs = f"Observation: 在記憶庫中找到相關資訊如下：\n{found_info}"
+                        else:
+                            obs = f"Observation: 記憶庫中找不到關於 '{a_param}' 的具體紀錄。"
+                    elif a_type == "REFLECT_USER":
+                        self.vault.append_to_file("user", "溝通偏好", a_param)
+                        obs = "Observation: 偏好已紀錄。"
+                    elif a_type == "REFLECT_MEMORY":
+                        self.vault.append_to_file("memory", "當前階段", a_param)
+                        obs = "Observation: 事實已紀錄。"
                     else:
-                        obs = f"Observation: 未知 Action '{action_type}'，請嘗試 REPLY 或 REFLECT。"
+                        obs = f"Observation: 思考已確認。"
                 
-                # 4. 加入 Observation 並進入下一輪
-                context.append(AIMessage(content=f"Observation: {obs}"))
+                context.append(AIMessage(content=obs))
                 self._notify(trace_id, session_id, "observation", obs)
                 
             except Exception as e:
-                # 5. 錯誤容忍 (環境回饋)
-                err_obs = f"Observation Error: 執行過程中發生錯誤 {str(e)}。請嘗試修正策略或直接 REPLY。"
+                err_obs = f"Error: {str(e)}"
                 context.append(AIMessage(content=err_obs))
                 self._notify(trace_id, session_id, "error", err_obs)
 
-        if not final_reply:
-            final_reply = "對不起，我思考得太久了，暫時沒辦法給你完整的答案 (´;ω;`) [EMOTION: sad]"
-            
-        # 6. 記錄日誌 & 檢查壓縮
-        self.vault.write_log([HumanMessage(content=user_input), AIMessage(content=final_reply)])
-        self.vault.compress_logs(self.model)
+        if final_reply and final_reply != "__IGNORE__":
+            self.vault.write_log([input_msg, AIMessage(content=final_reply)])
+            self.vault.compress_logs(self.model)
+            return final_reply
         
-        return final_reply
+        return None

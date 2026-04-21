@@ -41,11 +41,34 @@ async def handle_envelope(envelope: NexusEnvelope, engine: BrainEngine, bus: Mes
         print(f'[Brain] ✅ [REPLY] Trace: {trace_id}')
 
     elif envelope.type == MessageType.HEARTBEAT:
-        print(f'[Brain] 💓 [HEARTBEAT] Trace: {trace_id}')
-        # 心跳觸發的被動行為：例如檢查是否有待辦事項或環境異常
-        # 這裡我們讓引擎進行一次「自我反思」
-        # await engine.run(trace_id, session_id, "[SYSTEM] 目前是背景檢查時間，請確認是否有任何需要主動提醒用戶的事情。")
-        pass
+        print(f'[Brain] 💓 [HEARTBEAT] Trace: {trace_id}. Triggering proactive reflection...')
+        # 心跳觸發的被動行為：讓引擎進行一次「自我反思」
+        response_text = await engine.run(trace_id, session_id, "", is_proactive=True)
+        
+        if response_text and response_text != "__IGNORE__":
+            # 解析情緒與清理內容
+            emotion = "curious"
+            emotion_match = re.search(r"\[EMOTION: (.*?)\]", response_text)
+            if emotion_match:
+                emotion = emotion_match.group(1).lower().strip()
+            
+            clean_content = re.sub(r"\[EMOTION: .*?\]", "", response_text).strip()
+            
+            output_envelope = NexusEnvelope(
+                source="brain:proactive",
+                type=MessageType.TEXT,
+                trace_id=trace_id,
+                session_id=session_id,
+                payload={
+                    "content": clean_content,
+                    "emotion": emotion,
+                    "is_proactive": True
+                }
+            )
+            bus.publish_envelope(output_envelope)
+            print(f'[Brain] 📢 Proactive engagement sent: {clean_content[:30]}...')
+        else:
+            print(f'[Brain] 😴 Proactive check completed: No action needed.')
 
 async def run_brain_worker():
     bus = MessageBus()

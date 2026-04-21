@@ -96,20 +96,16 @@ python -m tests.test_nup_flow
   2. 啟動大腦 (Brain Worker)
   這會啟動新的推理引擎，並監聽輸入與心跳。
 
-   1 export PYTHONPATH=$PYTHONPATH:.
-   2 python3 src/brain/worker.py
+
+python -m src.brain.worker
 
   3. 啟動心跳發送器 (Heartbeat - 另開視窗)
   這會每 5 分鐘發送一次 tick，您可以在 Worker 視窗看到 [HEARTBEAT] 訊號。
-
-   1 export PYTHONPATH=$PYTHONPATH:.
-   2 python3 src/brain/heartbeat.py
+python -m src.brain.heartbeat
 
   4. 執行自主循環測試腳本 (另開視窗)
   我為您準備了一個 tests/test_reasoning_loop.py，它會發送一個需要「記憶事實」與「鼓勵」的複合請求，您可以觀察 AI 如何進行多步思考。
-
-   1 export PYTHONPATH=$PYTHONPATH:.
-   2 python3 tests/test_reasoning_loop.py
+python -m tests.test_reasoning_loop
 
   測試腳本預期輸出範例：
 

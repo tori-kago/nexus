@@ -20,7 +20,7 @@ async def run_heartbeat():
         except Exception as e:
             print(f"[Heartbeat] Error: {e}")
             
-        await asyncio.sleep(300) # 5 mins
+        await asyncio.sleep(600) # 10 mins
 
 if __name__ == "__main__":
     asyncio.run(run_heartbeat())

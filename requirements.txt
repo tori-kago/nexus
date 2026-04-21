@@ -12,3 +12,4 @@ python-dotenv
 faster-whisper
 pydub
 audioop-lts
+asyncio
