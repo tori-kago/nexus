@@ -7,14 +7,39 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # 掛載 .env 方便隨時在外部修改
       - ./.env:/app/.env
-      # 持久化機器人大腦記憶 (.md 與 .db 檔案)
       - ./src/brain/vault:/app/src/brain/vault
-      # 掛載 .git 以支援 Git 快照/回滾功能
       - ./.git:/app/.git
     env_file:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
+    restart: always
+
+  tg-bot:
+    build: .
+    container_name: nexus-tg-bot
+    depends_on:
+      - app
+    env_file:
+      - .env
+    environment:
+      - GATEWAY_URL=http://app:8000
+      - BOT_NOTIFY_PORT=9000
+      - BOT_NOTIFY_URL=http://tg-bot:9000/push
+    command: python -m src.agent.tg_bot
+    restart: always
+
+  discord-bot:
+    build: .
+    container_name: nexus-discord-bot
+    depends_on:
+      - app
+    env_file:
+      - .env
+    environment:
+      - GATEWAY_URL=http://app:8000
+      - BOT_NOTIFY_PORT=9001
+      - BOT_NOTIFY_URL=http://discord-bot:9001/push
+    command: python -m src.agent.discord_bot
     restart: always

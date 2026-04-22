@@ -15,11 +15,14 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Nexus.TG")
 
-GATEWAY_WS_URL = "ws://localhost:8000/ws"
-GATEWAY_BASE_URL = "http://localhost:8000"
+GATEWAY_BASE_URL = os.getenv("GATEWAY_URL", "http://localhost:8000")
+GATEWAY_WS_URL = GATEWAY_BASE_URL.replace("http", "ws") + "/ws"
+
 # 本地 Bot 通知接收地址
-BOT_NOTIFY_PORT = 9000
-BOT_NOTIFY_URL = f"http://localhost:{BOT_NOTIFY_PORT}/push"
+BOT_NOTIFY_HOST = os.getenv("BOT_NOTIFY_HOST", "0.0.0.0")
+BOT_NOTIFY_PORT = int(os.getenv("BOT_NOTIFY_PORT", "9000"))
+# Gateway 用來回呼此 Bot 的 URL
+BOT_NOTIFY_URL = os.getenv("BOT_NOTIFY_URL", f"http://localhost:{BOT_NOTIFY_PORT}/push")
 
 # --- TG Bot 客戶端部分 ---
 tg_app = None
@@ -68,7 +71,7 @@ async def receive_push(request: Request):
     return {"status": "ok"}
 
 def run_notify_server():
-    uvicorn.run(notify_server, host="0.0.0.0", port=BOT_NOTIFY_PORT)
+    uvicorn.run(notify_server, host=BOT_NOTIFY_HOST, port=BOT_NOTIFY_PORT)
 
 if __name__ == '__main__':
     token = os.getenv("TELEGRAM_BOT_TOKEN")

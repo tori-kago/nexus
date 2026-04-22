@@ -15,11 +15,14 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Nexus.Discord")
 
-GATEWAY_WS_URL = "ws://localhost:8000/ws"
-GATEWAY_BASE_URL = "http://localhost:8000"
-# 本地 Discord Bot 通知接收地址 (換一個 Port，避免與 TG 衝突)
-BOT_NOTIFY_PORT = 9001
-BOT_NOTIFY_URL = f"http://localhost:{BOT_NOTIFY_PORT}/push"
+GATEWAY_BASE_URL = os.getenv("GATEWAY_URL", "http://localhost:8000")
+GATEWAY_WS_URL = GATEWAY_BASE_URL.replace("http", "ws") + "/ws"
+
+# 本地 Discord Bot 通知接收地址
+BOT_NOTIFY_HOST = os.getenv("BOT_NOTIFY_HOST", "0.0.0.0")
+BOT_NOTIFY_PORT = int(os.getenv("BOT_NOTIFY_PORT", "9001"))
+# Gateway 用來回呼此 Bot 的 URL (在 Docker 內部應為 http://discord-bot:9001/push)
+BOT_NOTIFY_URL = os.getenv("BOT_NOTIFY_URL", f"http://localhost:{BOT_NOTIFY_PORT}/push")
 
 class NexusDiscordBot(commands.Bot):
     def __init__(self):
@@ -82,7 +85,7 @@ async def receive_push(request: Request):
     return {"status": "ok"}
 
 def run_notify_server():
-    uvicorn.run(notify_server, host="0.0.0.0", port=BOT_NOTIFY_PORT)
+    uvicorn.run(notify_server, host=BOT_NOTIFY_HOST, port=BOT_NOTIFY_PORT)
 
 if __name__ == '__main__':
     token = os.getenv("DISCORD_BOT_TOKEN")
