@@ -18,8 +18,6 @@ def play_audio(url: str):
         temp_file = "temp_reply.mp3"
         r = requests.get(full_url)
         with open(temp_file, "wb") as f: f.write(r.content)
-        
-        # 非阻塞播放 (Linux/Mac 預設)
         if os.name == "nt":
             subprocess.Popen(["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", temp_file])
         else:
@@ -33,35 +31,45 @@ def play_audio(url: str):
 
 async def interactive_chat():
     url = "ws://localhost:8000/ws"
-    console.print(Panel("[bold green]Nexus Flow CLI (v3.7)[/bold green]"))
+    console.print(Panel("[bold green]Nexus Deep Reasoning CLI (v5.1.1)[/bold green]"))
     
     try:
         async with websockets.connect(url) as websocket:
             while True:
                 user_input = console.input("\n[bold cyan]You > [/bold cyan]")
-                if user_input.lower() in ["exit", "quit"]: break
+                if user_input.lower() in ["exit", "quit", "bye"]: break
+                if not user_input.strip(): continue
                 
                 await websocket.send(json.dumps({"content": user_input}))
                 
-                with Live(Text("Nexus 正在思考..."), refresh_per_second=4, transient=True) as live:
+                with Live(Text("Nexus 正在啟動大腦..."), refresh_per_second=4, transient=True) as live:
                     while True:
                         try:
-                            response = await websocket.recv()
+                            # 增加逾時到 300 秒 (5分鐘)
+                            response = await asyncio.wait_for(websocket.recv(), timeout=300.0)
                             data = json.loads(response)
                             
                             if data.get("type") == "thought":
-                                live.update(Text(f"[{data.get('state').upper()}] {data.get('content')[:100]}", style="yellow"))
+                                state = data.get('state', '').upper()
+                                content = data.get('content', '')
+                                live.update(Text(f"[{state}] {content[:150]}", style="yellow"))
                                 
                             elif data.get("type") == "text":
-                                # 立即顯示文字，不等待音訊
                                 live.update(Text(""))
-                                console.print(f"[bold magenta]Nexus ({data.get('emotion')}) >[/bold magenta] {data.get('content')}")
+                                content = data.get('content')
+                                emotion = data.get('emotion', 'neutral')
+                                console.print(f"[bold magenta]Nexus ({emotion}) >[/bold magenta] {content}")
+                                if not data.get("is_proactive"):
+                                    break
                                 
                             elif data.get("type") == "audio":
-                                # 音訊隨後就到
                                 play_audio(data.get("audio_url"))
-                                break # 這一輪對話結束
-                        except: break
+                                
+                        except asyncio.TimeoutError:
+                            console.print("[dim red](大腦還在努力思考中...)[/dim red]")
+                        except Exception as e:
+                            console.print(f"[bold red]通訊異常: {e}[/bold red]")
+                            break
                             
     except Exception as e:
         console.print(f"[bold red]連線失敗: {e}[/bold red]")

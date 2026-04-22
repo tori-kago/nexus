@@ -49,6 +49,10 @@ class IMemoryAdapter(Protocol):
         """將完整的對話上下文紀錄到日誌系統中"""
         ...
 
+    async def log_trace(self, content: str):
+        """將詳細的推理過程紀錄到追蹤日誌 (.log) 中"""
+        ...
+
 class IToolAdapter(Protocol):
     """
     外部工具/技能執行適配器介面 (External Tool/Skill Provider Protocol)。

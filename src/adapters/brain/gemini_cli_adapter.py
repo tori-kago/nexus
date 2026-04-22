@@ -6,29 +6,22 @@ from typing import List, Any
 from src.core.protocols import IBrainAdapter, ThoughtResponse
 
 class GeminiCLIBrainAdapter(IBrainAdapter):
-    """
-    直接使用 gemini cli 進行推理的適配器。
-    不需要 langchain。
-    """
     def __init__(self, model_name: str = 'gemini-cli'):
         self.model_name = model_name
 
     async def generate_thought(self, context: List[Any], system_prompt: str) -> ThoughtResponse:
         """
-        將上下文轉為 prompt 並透過 subprocess 呼叫 gemini cli
+        對標 OpenClaw 穩定性：強制執行標籤解析。
         """
-        # 1. 建立 Prompt
+        # 1. 建立完整 Prompt
         prompt_parts = [system_prompt]
         for msg in context:
-            # 支援 langchain 訊息對象或純字串
             content = getattr(msg, "content", str(msg))
             prompt_parts.append(content)
-        
         full_prompt = '\n'.join(prompt_parts)
 
-        # 2. 非同步呼叫 CLI
+        # 2. 呼叫 Gemini CLI
         try:
-            # 使用 asyncio.create_subprocess_exec 以免阻塞主執行緒
             cmd = ['gemini', '--prompt', full_prompt, '--output-format', 'json']
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -39,40 +32,41 @@ class GeminiCLIBrainAdapter(IBrainAdapter):
 
             if process.returncode != 0:
                 return ThoughtResponse(
-                    thought="CLI 執行錯誤",
+                    thought="系統錯誤",
                     action_type="ERROR",
-                    action_param=f"Exit {process.returncode}: {stderr.decode()}"
+                    action_param=f"CLI Exit {process.returncode}: {stderr.decode()}"
                 )
 
-            # 3. 解析 CLI 的 JSON 輸出
             data = json.loads(stdout.decode())
-            # 根據您的 cli_adapter.py，回覆在 'response' 欄位
-            # 但如果 CLI 直接回傳內容，我們也支援
-            content = data.get('response', stdout.decode()).strip()
+            raw_content = data.get('response', stdout.decode()).strip()
+
+            # --- OpenClaw 風格之嚴格解析 ---
+            # 尋找標籤位置
+            thought_idx = raw_content.find("[THOUGHT]")
+            action_idx = raw_content.find("[ACTION]")
+
+            if thought_idx != -1 and action_idx != -1:
+                # 正常情況：兩者皆具
+                thought = raw_content[thought_idx + 9 : action_idx].strip()
+                action_part = raw_content[action_idx + 8 :].strip()
+                
+                if ":" in action_part:
+                    a_type, a_param = action_part.split(":", 1)
+                    return ThoughtResponse(
+                        thought=thought,
+                        action_type=a_type.strip(),
+                        action_param=a_param.strip()
+                    )
+                else:
+                    return ThoughtResponse(thought=thought, action_type="THINK", action_param=action_part)
+            
+            # 異常情況：格式不符
+            # 我們不再預設為 REPLY，而是回報給 Orchestrator 進行 Observation 引導
+            return ThoughtResponse(
+                thought="模型輸出格式未遵循規範",
+                action_type="INVALID_FORMAT",
+                action_param=raw_content
+            )
 
         except Exception as e:
-            return ThoughtResponse(
-                thought="例外發生",
-                action_type="ERROR",
-                action_param=str(e)
-            )
-
-        # 4. 解析 [THOUGHT] 與 [ACTION]
-        thought_match = re.search(r"\[THOUGHT\]\s*(.*?)\s*(?=\[ACTION\]|$)", content, re.DOTALL)
-        action_match = re.search(r"\[ACTION\]\s*(.*?):\s*(.*)", content, re.DOTALL)
-        
-        thought = thought_match.group(1).strip() if thought_match else "Gemini CLI 正在分析..."
-        
-        if not action_match:
-            # 如果模型沒給 ACTION，預設為 REPLY 並清理情緒標籤
-            return ThoughtResponse(
-                thought=thought,
-                action_type="REPLY",
-                action_param=content
-            )
-            
-        return ThoughtResponse(
-            thought=thought,
-            action_type=action_match.group(1).strip(),
-            action_param=action_match.group(2).strip()
-        )
+            return ThoughtResponse(thought="系統崩潰", action_type="ERROR", action_param=str(e))

@@ -2,125 +2,100 @@ import asyncio
 import json
 import inspect
 import time
+import os
+import importlib.util
 from typing import Dict, Any, Callable, Optional, List, Type, get_type_hints
 from pydantic import BaseModel, Field, create_model, ValidationError
 
-class ToolResult(BaseModel):
-    """標準化工具執行結果"""
-    success: bool
-    data: str
-    error: Optional[str] = None
-    execution_time: float = 0.0
-
 class ToolDefinition(BaseModel):
-    """工具的元數據定義"""
     name: str
     description: str
     parameters_schema: Dict[str, Any] = Field(default_factory=dict)
-    param_model: Optional[Type[BaseModel]] = None # 用於校驗的 Pydantic 模型
+    param_model: Optional[Type[BaseModel]] = None
 
 class PythonToolAdapter:
     """
-    Python 函數工具適配器 2.2 (Ultra-Stable)。
-    支援 Runtime 強型別校驗、自動 Schema 推導與執行結果標準化。
+    Python 函數工具適配器 3.1 (Adaptive Unpacking)。
+    具備參數自動解包能力，防止大腦傳入過度包裝的 JSON。
     """
     def __init__(self):
         self._tools: Dict[str, Callable] = {}
         self._definitions: Dict[str, ToolDefinition] = {}
+        self.custom_skills_path = "src/skills"
 
     def register_tool(self, name: str, description: str, func: Callable):
-        """
-        註冊工具，並自動從函數的 Type Hints 推導 JSON Schema 與 Pydantic 校驗模型。
-        """
         sig = inspect.signature(func)
         type_hints = get_type_hints(func)
-        
         fields = {}
         properties = {}
         required = []
+        for p_name, p in sig.parameters.items():
+            p_type = type_hints.get(p_name, Any)
+            fields[p_name] = (p_type, ... if p.default == inspect.Parameter.empty else p.default)
+            properties[p_name] = {"type": "string", "description": f"參數 {p_name}"}
+            if p.default == inspect.Parameter.empty: required.append(p_name)
         
-        for param_name, param in sig.parameters.items():
-            param_type = type_hints.get(param_name, Any)
-            
-            # 1. 建立 Pydantic 欄位定義 (用於動態模型)
-            default_val = ... if param.default == inspect.Parameter.empty else param.default
-            fields[param_name] = (param_type, default_val)
-            
-            # 2. 建立 JSON Schema 說明 (用於 Prompt)
-            type_str = "string"
-            if param_type == int: type_str = "integer"
-            elif param_type == float: type_str = "number"
-            elif param_type == bool: type_str = "boolean"
-            
-            properties[param_name] = {
-                "type": type_str,
-                "description": f"參數 {param_name}"
-            }
-            if param.default == inspect.Parameter.empty:
-                required.append(param_name)
-
-        # 建立動態校驗模型
         dynamic_model = create_model(f"{name}_Params", **fields)
-
-        definition = ToolDefinition(
+        self._tools[name] = func
+        self._definitions[name] = ToolDefinition(
             name=name,
             description=description,
-            parameters_schema={
-                "type": "object",
-                "properties": properties,
-                "required": required
-            },
+            parameters_schema={"type": "object", "properties": properties, "required": required},
             param_model=dynamic_model
         )
-        
-        self._tools[name] = func
-        self._definitions[name] = definition
-        print(f"[ToolAdapter 2.2] Registered: {name} (Type-safe enabled)")
+        print(f"[ToolHub] Registered: {name}")
 
-    async def execute(self, tool_name: str, params: Dict[str, Any]) -> str:
+    def load_custom_skills(self):
+        # 暫時不實作複雜的動態載入，維持穩定
+        pass
+
+    async def execute(self, tool_name: str, params: Any) -> str:
         """
-        執行工具。包含參數校驗與錯誤捕捉。
+        執行工具，具備自適應解包邏輯。
         """
         if tool_name not in self._tools:
             return f"Error: Tool '{tool_name}' not found."
             
-        start_time = time.time()
+        func = self._tools[tool_name]
         definition = self._definitions[tool_name]
         
-        try:
-            # 1. 參數校驗 (Runtime Validation)
-            if definition.param_model:
-                try:
-                    # 使用 Pydantic 自動進行轉型與驗證
-                    validated_params = definition.param_model(**params).model_dump()
-                except ValidationError as ve:
-                    # 這是最關鍵的：給大腦清晰的錯誤指引
-                    error_details = ve.errors()
-                    err_msg = f"參數校驗失敗: {tool_name} 期待的參數格式不正確。\n"
-                    for err in error_details:
-                        err_msg += f"- 欄位 '{err['loc'][0]}': {err['msg']} (傳入值: {params.get(err['loc'][0])})\n"
-                    return err_msg
+        # --- 核心邏輯：參數預處理 ---
+        # 如果大腦傳來的是字串（例如 "ls -la"），但我們預期是字典
+        if isinstance(params, str):
+            try:
+                # 嘗試解析為 JSON
+                params = json.loads(params.replace("'", '"'))
+            except:
+                # 失敗則將字串包裝成第一個參數
+                first_param_name = list(definition.param_model.__annotations__.keys())[0]
+                params = {first_param_name: params}
 
-            # 2. 執行函數
-            func = self._tools[tool_name]
+        # 如果傳入的是字典，但裡面只有一個 key 且與函數參數名不符 (常見於大腦幻覺)
+        # 例如: 傳入 {"command": "ls"} 給 run_shell(cmd)
+        if isinstance(params, dict) and len(params) == 1:
+            val = list(params.values())[0]
+            param_key = list(params.keys())[0]
+            expected_key = list(definition.param_model.__annotations__.keys())[0]
+            if param_key != expected_key:
+                # 自動修正 key
+                params = {expected_key: val}
+
+        try:
+            # 參數驗證
+            validated = definition.param_model(**params).model_dump()
             if asyncio.iscoroutinefunction(func):
-                result_data = await func(**validated_params)
+                result = await func(**validated)
             else:
-                result_data = func(**validated_params)
-            
-            return str(result_data)
-            
+                result = func(**validated)
+            return str(result)
+        except ValidationError as ve:
+            return f"參數錯誤: {ve.json()}"
         except Exception as e:
             return f"執行錯誤 ({tool_name}): {str(e)}"
 
     def get_system_prompt_fragment(self) -> str:
-        if not self._definitions:
-            return "目前沒有可用的外部工具。"
-            
-        prompt = "## 可用工具與技能清單 (Capabilities)\n"
-        prompt += "請嚴格遵守參數格式，若執行出錯，請根據 Observation 反思並修正參數後再次嘗試。\n\n"
-        for def_obj in self._definitions.values():
-            prompt += f"### {def_obj.name}\n"
-            prompt += f"- **用途**: {def_obj.description}\n"
-            prompt += f"- **參數規格**: {json.dumps(def_obj.parameters_schema, ensure_ascii=False, indent=2)}\n\n"
+        if not self._definitions: return ""
+        prompt = "## 可用工具清單 (Capabilities)\n"
+        for d in self._definitions.values():
+            prompt += f"- {d.name}: {d.description} (格式: {json.dumps(d.parameters_schema)})\n"
         return prompt

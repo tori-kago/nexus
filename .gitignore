@@ -7,9 +7,11 @@ __pycache__/
 src/brain/vault/temp_tts/
 src/brain/vault/cache_tts/
 src/brain/vault/logs/*.bak
+src/brain/vault/logs/*.log
 temp_reply.mp3
 .env
 
 # OS
 .DS_Store
 Thumbs.db
+*.db
