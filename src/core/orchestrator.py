@@ -10,6 +10,9 @@ from src.core.protocols import IBrainAdapter, IMemoryAdapter, IToolAdapter, Thou
 
 logger = logging.getLogger("Nexus.Orchestrator")
 
+# 建立全局日誌鎖，防止多任務並行寫入混亂
+trace_lock = asyncio.Lock()
+
 class NexusOrchestrator:
     def __init__(self, brain, memory, tool, on_status=None):
         self.brain = brain
@@ -31,29 +34,24 @@ class NexusOrchestrator:
 {core_context}
 
 ## 核心推理與自癒協定 (Self-Healing Protocol)
-1. 你是一個具備「高度自主權」的工程師助理。
-2. 你的每一輪回覆必須嚴格包含 [THOUGHT] 與 [ACTION] 標籤。
-3. 嚴禁使用內建知識回答關於時事或網頁內容。你必須先使用 `run_shell` 進行 ls, cat 或執行技能。
-4. 解決問題流程：先 discover_skills 察看可用技能，再讀取對應目錄下的 SKILL.md，最後執行。
-
-可用工具:
-- run_shell(command): 執行終端指令。
-- read_nexus_file(file_path): 讀取檔案內容。
-- update_env_config: 更新配置。
-- REPLY: (僅在任務完成後使用，包含情緒標籤)。
+1. 你是一個具備「高度自主權」的助理。你的輸出**必須為純 JSON 格式**。
+2. 嚴禁在 JSON 之外添加任何文字。
+3. 解決問題流程：先執行 `run_shell(command="ls -R src/skills/")`，再 read_nexus_file 讀取指南，最後執行。
+4. 當前會話 ID: {session_id}
 """
 
     async def run(self, user_input, is_proactive=False, session_context=None, session_id="default"):
         input_msg = HumanMessage(content=user_input)
         system_prompt = await self._assemble_system_prompt(is_proactive, session_id)
         
-        # 1. 用於此次推理的上下文 (包含完整的思考過程)
+        # 建立專屬此次任務的上下文
         reasoning_context = [SystemMessage(content=system_prompt)]
         if session_context: reasoning_context.extend(session_context)
         reasoning_context.append(input_msg)
         
-        # 2. 開始記錄追蹤日誌 (Trace)
-        await self.memory.log_trace(f"--- [NEW TASK] platform_id: {session_id} ---\nInput: {user_input}")
+        # 記錄 Trace (受鎖保護)
+        async with trace_lock:
+            await self.memory.log_trace(f"--- [START TASK] {session_id} ---\nInput: {user_input}")
         
         await self._notify("starting", "啟動自主工程師模式...")
         
@@ -68,14 +66,14 @@ class NexusOrchestrator:
                 act_type = thought_res.action_type.strip()
                 act_param = thought_res.action_param.strip()
                 
-                # --- 紀錄 Trace ---
-                await self.memory.log_trace(f"Step {step}:\n[THOUGHT] {thought_res.thought}\n[ACTION] {act_type}: {act_param}")
+                # 寫入 Trace
+                async with trace_lock:
+                    await self.memory.log_trace(f"[{session_id}] Step {step}:\n[THOUGHT] {thought_res.thought}\n[ACTION] {act_type}: {act_param}")
                 
-                # --- 格式校驗引導 ---
                 if act_type == "INVALID_FORMAT":
-                    obs = "Error: 你未遵循 [THOUGHT] 與 [ACTION] 格式。請重新輸出，必須包含具體的行動指令。"
+                    obs = "Error: 你未遵循 JSON 格式。請只輸出 JSON 對象，包含 thought, action_type, action_param。"
                 elif f"{act_type}:{act_param}" == last_action and act_type != "REPLY":
-                    obs = "Error: 你正在重複相同的無效動作。請嘗試先 ls 或 cat 檔案來診斷。"
+                    obs = "Error: 你正在重複相同的無效動作。請先診斷環境。"
                 else:
                     last_action = f"{act_type}:{act_param}"
                     await self._notify(f"step_{step}", thought_res.thought)
@@ -84,36 +82,27 @@ class NexusOrchestrator:
                         final_reply = act_param
                         break
                     
-                    # 執行動作
-                    if act_type == "run_shell":
-                        obs = await self.tool.execute("run_shell", {"command": act_param})
-                    elif act_type == "read_nexus_file":
-                        obs = await self.tool.execute("read_nexus_file", {"file_path": act_param})
-                    elif act_type == "update_env_config":
-                        try: obs = await self.tool.execute("update_env_config", json.loads(act_param.replace("'", '"')))
-                        except: obs = "Error: JSON 格式錯誤。"
-                    elif act_type == "restore_nexus_snapshot":
-                        obs = await self.tool.execute("restore_nexus_snapshot", {})
-                    else:
-                        obs = f"Observation: 動作 '{act_type}' 已確認。請繼續下一步。"
+                    # 執行
+                    obs = await self.tool.execute(act_type, act_param)
 
-                # 餵回推理上下文
+                # 更新上下文
                 reasoning_context.append(AIMessage(content=f"[THOUGHT] {thought_res.thought}\n[ACTION] {act_type}: {act_param}"))
                 reasoning_context.append(AIMessage(content=f"Observation: {obs}"))
                 
-                await self.memory.log_trace(f"[OBSERVATION] {obs[:500]}...") # 紀錄部分 Observation 避免 Log 過長
+                async with trace_lock:
+                    await self.memory.log_trace(f"[{session_id}] [OBSERVATION] {obs[:300]}...")
                 await self._notify("observation", obs[:150])
 
             except Exception as e:
                 err_trace = traceback.format_exc()
-                error_msg = f"系統異常: {str(e)}\n{err_trace[-300:]}"
-                await self.memory.log_trace(f"FATAL ERROR:\n{err_trace}")
+                async with trace_lock:
+                    await self.memory.log_trace(f"[{session_id}] FATAL ERROR:\n{err_trace}")
+                error_msg = f"系統異常: {str(e)}"
                 await self._notify("error", error_msg)
                 reasoning_context.append(AIMessage(content=f"Observation: {error_msg}"))
 
         if final_reply:
-            # --- 最終紀錄：乾淨的對話 Log 寫入 MD ---
             await self.memory.log_interaction([input_msg, AIMessage(content=final_reply)])
             return final_reply
         
-        return "任務執行失敗，已達到推理上限。"
+        return "任務超限，請重試。"

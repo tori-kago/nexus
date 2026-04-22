@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import logging
+import copy
 from datetime import datetime
 from typing import Dict, List, Any
 from uuid import uuid4
@@ -30,7 +31,7 @@ async def lifespan(app: FastAPI):
     yield
     heartbeat_task.cancel()
 
-app = FastAPI(title='Nexus Gateway (Engineer v5.1)', lifespan=lifespan)
+app = FastAPI(title='Nexus Gateway (Knowledge Enabled v4.6)', lifespan=lifespan)
 
 # --- Housekeeping ---
 TEMP_TTS_DIR = "src/brain/vault/temp_tts"
@@ -51,13 +52,13 @@ stt_adapter = HybridSTTAdapter()
 tts_adapter = HybridTTSAdapter()
 session_store = SessionStore()
 
-# --- Register Skills (極簡化核心工具) ---
-tool_adapter.register_tool("run_shell", "執行終端機指令。用於環境診斷、安裝依賴與執行擴充技能。", run_shell)
-tool_adapter.register_tool("read_nexus_file", "讀取專案內檔案。用於學習技能指南或分析源碼。", read_nexus_file)
-tool_adapter.register_tool("update_env_config", "更新 .env 設定。", update_env_config)
-tool_adapter.register_tool("restore_nexus_snapshot", "回滾系統快照。", restore_nexus_snapshot)
-tool_adapter.register_tool("update_personality", "優化性格描述。", update_personality)
-tool_adapter.register_tool("reset_session_context", "重置當前對話歷史。", reset_session_context)
+# --- Register Skills ---
+tool_adapter.register_tool("run_shell", "執行終端指令。", run_shell)
+tool_adapter.register_tool("read_nexus_file", "讀取檔案內容。", read_nexus_file)
+tool_adapter.register_tool("update_env_config", "更新配置。", update_env_config)
+tool_adapter.register_tool("restore_nexus_snapshot", "回滾快照。", restore_nexus_snapshot)
+tool_adapter.register_tool("update_personality", "優化性格文檔。", update_personality)
+tool_adapter.register_tool("reset_session_context", "重置對話歷史。", reset_session_context)
 tool_adapter.register_tool("record_work_insight", "紀錄研究心得。", record_work_insight)
 
 def create_orchestrator(on_status_cb=None):
@@ -66,7 +67,23 @@ def create_orchestrator(on_status_cb=None):
 async def heartbeat_loop():
     await asyncio.sleep(10)
     while True:
-        # 心跳邏輯維持原樣 (同 v4.5)
+        current_hour = datetime.now().hour
+        is_work_time = (9 <= current_hour <= 11)
+        active_sessions = session_store.get_active_sessions(hours=24)
+        for session in active_sessions:
+            sid = session["session_id"]
+            history = session_store.get_messages(sid)
+            # --- 核心防護：心跳任務也使用深拷貝 ---
+            safe_history = copy.deepcopy(history)
+            orchestrator = create_orchestrator()
+            if is_work_time:
+                prompt = "[SYSTEM WORK] 研究時間。請瀏覽你感興趣的主題並紀錄成長心得。若無事請回 IGNORE。"
+            else:
+                prompt = "[SYSTEM HEARTBEAT] 檢查狀態與時間，決定是否主動聯繫用戶。若無事請回 IGNORE。"
+            try:
+                reply = await asyncio.wait_for(orchestrator.run(prompt, is_proactive=True, session_context=safe_history, session_id=sid), timeout=120.0)
+                if reply and "IGNORE" not in reply: await notify_user_internal(sid, reply)
+            except: pass
         await asyncio.sleep(3600)
 
 async def notify_user_internal(sid, content):
@@ -75,15 +92,14 @@ async def notify_user_internal(sid, content):
         if ws.client_state.name == "CONNECTED":
             await ws.send_json({"type": "text", "content": content, "is_proactive": True})
             return
-    with session_store._init_db() as _:
-        import sqlite3
-        with sqlite3.connect(session_store.DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute("SELECT platform, platform_user_id FROM sessions WHERE session_id = ?", (sid,)).fetchone()
-            if row and row["platform"] in platform_clients:
-                import requests
-                try: requests.post(platform_clients[row["platform"]], json={"user_id": row["platform_user_id"], "content": content}, timeout=5)
-                except: pass
+    import sqlite3
+    with sqlite3.connect(session_store.DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT platform, platform_user_id FROM sessions WHERE session_id = ?", (sid,)).fetchone()
+        if row and row["platform"] in platform_clients:
+            import requests
+            try: requests.post(platform_clients[row["platform"]], json={"user_id": row["platform_user_id"], "content": content}, timeout=5)
+            except: pass
 
 active_connections: Dict[str, WebSocket] = {}
 platform_clients: Dict[str, str] = {}
@@ -121,9 +137,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = Query(None)
                     user_input = await stt_adapter.speech_to_text(data["bytes"])
                     await on_status_update("observation", f"聽到了: {user_input}")
                 if not user_input: continue
+                
+                # --- 防護 C: 確保 Context 獨立性 (深拷貝) ---
                 history = session_store.get_messages(session_id)
+                safe_history = copy.deepcopy(history)
+                
                 orchestrator = create_orchestrator(on_status_cb=on_status_update)
-                reply_text = await asyncio.wait_for(orchestrator.run(user_input, session_context=history, session_id=session_id), timeout=120.0)
+                reply_text = await asyncio.wait_for(orchestrator.run(user_input, session_context=safe_history, session_id=session_id), timeout=120.0)
+                
                 if reply_text and websocket.client_state.name == "CONNECTED":
                     emotion = "neutral"
                     emotion_match = re.search(r"\[EMOTION: (.*?)\]", reply_text)
@@ -138,6 +159,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = Query(None)
                                 await websocket.send_json({"type": "audio", "audio_url": f"/{sub}/{os.path.basename(audio_path)}"})
                         except: pass
                     asyncio.create_task(handle_tts(clean_text, emotion))
+                    
+                    # 重新獲取歷史並保存 (此處維持正確的存儲邏輯)
                     history = session_store.get_messages(session_id)
                     history.append(HumanMessage(content=user_input))
                     history.append(AIMessage(content=reply_text))
