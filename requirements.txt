@@ -1,18 +1,28 @@
+# --- 核心 Web 服務 (FastAPI & WebSocket) ---
 fastapi[all]
 uvicorn
 websockets
 pydantic
 pydantic-settings
+python-dotenv
+
+# --- 大腦與邏輯 (Brain & Core) ---
+# (目前使用原生 Gemini CLI，暫無額外核心庫依賴)
+langchain-core
 loguru
 rich
-langchain-core
-python-dotenv
-# 語音辨識 (STT)
+requests
+
+# --- 感官處理 (Sensory: STT & TTS) ---
 faster-whisper
-# 語音合成 (TTS)
 edge-tts
 pydub
-# Azure 語音服務 (主力感官)
 azure-cognitiveservices-speech
-# 第三方精品語音
-requests
+
+# --- IM 客戶端入口 (IM Gateways) ---
+python-telegram-bot
+discord.py
+
+# --- 系統工具 (System Tools) ---
+# sqlite3 (內建)
+# subprocess (內建)

@@ -30,37 +30,40 @@ class NexusOrchestrator:
                     await self.on_status(state, reasoning)
                 else: self.on_status(state, reasoning)
             except: pass
+async def _assemble_system_prompt(self, is_proactive: bool = False, session_id: str = "default") -> str:
+    if hasattr(self.memory, "get_core_context"):
+        core_context = await self.memory.get_core_context()
+    else:
+        core_context = getattr(self.memory, "get_identity", lambda: "")()
 
-    async def _assemble_system_prompt(self, is_proactive: bool = False) -> str:
-        if hasattr(self.memory, "get_core_context"):
-            core_context = await self.memory.get_core_context()
-        else:
-            core_context = getattr(self.memory, "get_identity", lambda: "")()
-            
-        tools_info = self.tool.get_system_prompt_fragment() if self.tool else "目前沒有可用的外部工具。"
-        
-        prompt = f"""
+    tools_info = self.tool.get_system_prompt_fragment() if self.tool else "目前沒有可用的外部工具。"
+
+    prompt = f"""
 {core_context}
 
 ## 核心運作規約 (Reasoning Protocol)
-1. 你現在處於「自主思考循環」中。
+1. 你現在處於「自主思考循環」中。你的當前會話 ID 是: {session_id}。
 2. 每一輪回覆中，你必須且只能輸出一個 [THOUGHT] 與一個 [ACTION]。
 3. 動作格式嚴格遵循: [ACTION] 類型: 內容
 
 可用 Action 類型:
-   - REPLY: (回覆用戶)
-   - SEARCH: (檢索記憶庫)
-   - EXECUTE: (執行具體技能。格式: tool_name({{"param": "val"}}) )
-   - REFLECT_USER: (紀錄用戶偏好)
-   - THINK: (純推理)
+- REPLY: (回覆用戶)
+- SEARCH: (檢索記憶庫)
+- EXECUTE: (執行具體技能。格式: tool_name({{"param": "val"}}) )
+- THINK: (純推理)
+
+### 關於重置對話
+如果你感覺對話已經偏離軌道，或者用戶明確要求你「重啟」或「重新開始」，請執行:
+[ACTION] EXECUTE: reset_session_context({{"session_id": "{session_id}"}})
 
 {tools_info}
 """
-        return prompt
+    return prompt
 
-    async def run(self, user_input: str, is_proactive: bool = False, session_context: List[Any] = None) -> Optional[str]:
-        input_msg = HumanMessage(content=user_input)
-        system_prompt = await self._assemble_system_prompt(is_proactive)
+async def run(self, user_input: str, is_proactive: bool = False, session_context: List[Any] = None, session_id: str = "default") -> Optional[str]:
+    input_msg = HumanMessage(content=user_input)
+    system_prompt = await self._assemble_system_prompt(is_proactive, session_id)
+
         
         context = [SystemMessage(content=system_prompt)]
         if session_context: context.extend(session_context)

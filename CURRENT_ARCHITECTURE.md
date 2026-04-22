@@ -1,66 +1,63 @@
-# Nexus 系統架構報告 (v3.5 - Full Sensory SOA)
+# Nexus 系統架構報告 (v4.3 - Distributed Presence)
 
-本文件描述了 Nexus 最新 (v3.5) 的實作架構。目前系統已達成「全感官整合」與「自主配置」的完整閉環。
+本文件描述了 Nexus 最新 (v4.3) 的實作架構，重點在於多平台支援、持久化會話與主動通知能力。
 
 ## 📊 當前系統架構圖 (2026-04-21)
 
 ```mermaid
 graph TD
-    subgraph "接入層 (Client Interface)"
-        Gateway["Gateway<br/>(src/gateway/main.py)"]
-        Interactive_CLI["Interactive Voice CLI<br/>(src/agent/cli_interactive.py)"]
+    subgraph "接入層 (Distributed Interfaces)"
+        CLI["Interactive CLI<br/>(src/agent/cli_interactive.py)"]
+        TG["Telegram Bot<br/>(src/agent/tg_bot.py)"]
+        DC["Discord Bot<br/>(src/agent/discord_bot.py)"]
     end
 
-    subgraph "核心控制層 (Nexus Orchestrator)"
-        Flow_Manager["NexusOrchestrator<br/>(src/core/orchestrator.py)"]
-        Session_Manager["Session & Context Window<br/>(History Management)"]
-        Protocols["Protocols & Contracts<br/>(src/core/protocols.py)"]
+    subgraph "通信層 (Notification Hub)"
+        Gateway["Nexus Gateway<br/>(src/gateway/main.py)"]
+        Notify_API["/notify & /register<br/>(Active Push)"]
     end
 
-    subgraph "適配器層 (Adapter Layer - Resilient)"
-        Brain_Adapter["GeminiCLIBrainAdapter<br/>(Native CLI Wrapper)"]
-        Memory_Adapter["VaultAdapter 2.1<br/>(Resilient Markdown DB)"]
-        Tool_Adapter["PythonToolAdapter 2.2<br/>(Type-safe & Schema-driven)"]
-        STT_Adapter["HybridSTTAdapter<br/>(Azure SDK -> Whisper)"]
-        TTS_Adapter["HybridTTSAdapter<br/>(ElevenLabs -> Azure -> Edge)"]
+    subgraph "核心控制層 (Orchestrator)"
+        Flow_Manager["NexusOrchestrator<br/>(Reasoning Loop)"]
+        Session_DB[("SQLite Session DB<br/>(sessions.db)")]
     end
 
-    subgraph "外部服務層 (External Services)"
-        LLM_Provider[("Gemini 1.5 Pro/Flash")]
-        Vault_Storage[("Local Markdown Files")]
-        Cloud_APIs[("Azure / ElevenLabs / Edge")]
-        Base_Skills["Base Skills<br/>(FS / Logs / Self-Config)"]
+    subgraph "適配器層 (Hybrid Adapters)"
+        Senses["Hybrid STT/TTS<br/>(Azure/Whisper/11Labs)"]
+        Vault["Vault 2.1<br/>(Resilient Markdown)"]
+        Tools["Tools 2.2<br/>(Type-safe Skills)"]
     end
 
-    %% 請求流向 (WebSocket/REST)
-    Interactive_CLI <-->|Text & Audio Stream| Gateway
-    Gateway -- "Injection" --> Flow_Manager
+    %% 請求流向
+    CLI <-->|WebSocket| Gateway
+    TG <-->|WS + Notify Callback| Gateway
+    DC <-->|WS + Notify Callback| Gateway
     
-    %% 核心呼叫 Adapters
-    Flow_Manager <--> Protocols
-    Flow_Manager -- "Action" --> Tool_Adapter
-    Flow_Manager -- "Sense" --> STT_Adapter
-    Flow_Manager -- "Voice" --> TTS_Adapter
-    Flow_Manager -- "History" --> Memory_Adapter
+    Gateway -- "Query/Save" --> Session_DB
+    Gateway -- "Inject" --> Flow_Manager
+    
+    Flow_Manager <--> Senses
+    Flow_Manager <--> Vault
+    Flow_Manager <--> Tools
 
-    %% 關鍵流程
-    Tool_Adapter -- "Auto-Config" --> Vault_Storage
-    Memory_Adapter -- "LCM Digestion" --> Vault_Storage
+    %% 主動通知流
+    External_Task["Scheduler / Logic"] -- "POST /notify" --> Notify_API
+    Notify_API -- "Relay" --> TG
+    Notify_API -- "Relay" --> DC
 ```
 
-## 🔍 架構關鍵特徵
+## 🔍 架構關鍵特徵 (v4.3)
 
-### 1. 多層降級感官 (Hybrid Sensory Tiers)
-*   **STT (聽力)**: Azure SDK (雲端) 優先 -> Whisper (本地) 保底。
-*   **TTS (說話)**: ElevenLabs -> Azure -> Edge-TTS (免費高品質)。
-*   這確保了系統在無網路或無預算的情況下，依然能維持基礎的互動能力。
+### 1. 多平台會話同步 (Cross-platform Persistence)
+*   採用 **SQLite (`sessions.db`)** 作為對話歷史的中樞。
+*   不同的入口 (CLI, TG, Discord) 共享同一個會話識別碼。用戶在 CLI 斷開後，在 TG 能銜接上之前的語境。
 
-### 2. 工業級工具鏈 (Toolbox 2.2)
-*   **強型別校驗**: 使用 Pydantic 在執行前驗證 LLM 傳入的參數。
-*   **自我修正**: 當參數錯誤時，適配器會提供清晰的錯誤說明，引導大腦自動修正指令。
+### 2. 全時通知中心 (Notification Hub)
+*   **平台註冊機制**：每個機器人啟動時會向 Gateway 註冊其接收推送的位址。
+*   **離線推送**：即使 WebSocket 斷開，核心仍能透過 `/notify` 接口主動找到用戶所在的平台發送緊急訊息。
 
-### 3. 自我配置能力 (Self-Configuring)
-*   Nexus 具備受控的 `.env` 寫入權限。用戶可以直接對話設定 API KEY，由 Nexus 完成持久化。
+### 3. 語音鏡像處理 (Sensory Mirroring)
+*   機器人自動感知輸入媒介。語音輸入觸發「文字+語音」回覆；文字輸入觸發「純文字」回覆。
 
-### 4. 記憶消化 (Memory Metabolism)
-*   具備自動摘要長對話並寫入 `memory.md` 的能力，防止會話過載並實現長期學習。
+### 4. 系統健壯性 (Resilience)
+*   維持自動 Git 快照、錯誤沙盒與垃圾自動清理邏輯。
