@@ -64,38 +64,59 @@ tool_adapter.register_tool("record_work_insight", "紀錄研究心得。", recor
 def create_orchestrator(on_status_cb=None):
     return NexusOrchestrator(brain=brain_adapter, memory=memory_adapter, tool=tool_adapter, on_status=on_status_cb)
 
+# --- 核心優化：針對性心跳循環 ---
 async def heartbeat_loop():
-    await asyncio.sleep(10)
+    """背景心跳：每小時反思，僅針對綁定平台(TG/DC)的用戶"""
+    await asyncio.sleep(30) # 啟動後稍等
     while True:
         current_hour = datetime.now().hour
         is_work_time = (9 <= current_hour <= 11)
+        
+        logger.info(f"[Heartbeat] 啟動循環 (工作時間: {is_work_time})...")
+        
+        # 獲取最近 24 小時內活躍的會話
         active_sessions = session_store.get_active_sessions(hours=24)
+        
         for session in active_sessions:
             sid = session["session_id"]
+            platform = session["platform"]
+            
+            # --- 關鍵優化：只對真實 IM 平台用戶進行主動反思 ---
+            if not platform or platform not in ["tg", "discord"]:
+                continue
+                
             history = session_store.get_messages(sid)
-            # --- 核心防護：心跳任務也使用深拷貝 ---
             safe_history = copy.deepcopy(history)
             orchestrator = create_orchestrator()
+            
             if is_work_time:
-                prompt = "[SYSTEM WORK] 研究時間。請瀏覽你感興趣的主題並紀錄成長心得。若無事請回 IGNORE。"
+                prompt = """
+[SYSTEM WORK] 現在是研究時間。請閱讀 soul/ 指南、分析近期日誌與技能，執行必要的自我優化。
+若有心得請用 record_work_insight 紀錄，完成後回傳 {"thought": "...", "action_type": "REPLY", "action_param": "IGNORE"}。
+"""
             else:
-                prompt = "[SYSTEM HEARTBEAT] 檢查狀態與時間，決定是否主動聯繫用戶。若無事請回 IGNORE。"
+                prompt = "[SYSTEM HEARTBEAT] 檢查近期對話與記憶，決定是否主動聯繫用戶。若無事請回 IGNORE。"
+                
             try:
-                reply = await asyncio.wait_for(orchestrator.run(prompt, is_proactive=True, session_context=safe_history, session_id=sid), timeout=120.0)
-                if reply and "IGNORE" not in reply: await notify_user_internal(sid, reply)
-            except: pass
-        await asyncio.sleep(3600)
+                # 心跳推理超時設為 180 秒以因應深度思維
+                reply = await asyncio.wait_for(orchestrator.run(prompt, is_proactive=True, session_context=safe_history, session_id=sid), timeout=180.0)
+                if reply and "IGNORE" not in reply:
+                    await notify_user_internal(sid, reply)
+            except Exception as e:
+                logger.error(f"Heartbeat error for {sid}: {e}")
+        
+        await asyncio.sleep(3600) # 每小時一次
 
-async def notify_user_internal(sid, content):
-    if sid in active_connections:
-        ws = active_connections[sid]
+async def notify_user_internal(session_id: str, content: str):
+    if session_id in active_connections:
+        ws = active_connections[session_id]
         if ws.client_state.name == "CONNECTED":
             await ws.send_json({"type": "text", "content": content, "is_proactive": True})
             return
     import sqlite3
     with sqlite3.connect(session_store.DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT platform, platform_user_id FROM sessions WHERE session_id = ?", (sid,)).fetchone()
+        row = conn.execute("SELECT platform, platform_user_id FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
         if row and row["platform"] in platform_clients:
             import requests
             try: requests.post(platform_clients[row["platform"]], json={"user_id": row["platform_user_id"], "content": content}, timeout=5)
@@ -122,13 +143,16 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = Query(None)
     if not session_id: session_id = f"anonymous_{str(uuid4())[:8]}"
     active_connections[session_id] = websocket
     if platform and platform_id: session_store.register_platform(session_id, platform, platform_id)
+
     async def on_status_update(state: str, reasoning: str):
         if websocket.client_state.name == "CONNECTED":
             try: await websocket.send_json({"type": "thought", "state": state, "content": reasoning})
             except: pass
     try:
         while True:
-            try: data = await websocket.receive()
+            try:
+                data = await websocket.receive()
+                if "text" not in data and "bytes" not in data: continue
             except: break
             try:
                 user_input = ""
@@ -137,14 +161,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = Query(None)
                     user_input = await stt_adapter.speech_to_text(data["bytes"])
                     await on_status_update("observation", f"聽到了: {user_input}")
                 if not user_input: continue
-                
-                # --- 防護 C: 確保 Context 獨立性 (深拷貝) ---
                 history = session_store.get_messages(session_id)
                 safe_history = copy.deepcopy(history)
-                
                 orchestrator = create_orchestrator(on_status_cb=on_status_update)
                 reply_text = await asyncio.wait_for(orchestrator.run(user_input, session_context=safe_history, session_id=session_id), timeout=120.0)
-                
                 if reply_text and websocket.client_state.name == "CONNECTED":
                     emotion = "neutral"
                     emotion_match = re.search(r"\[EMOTION: (.*?)\]", reply_text)
@@ -159,8 +179,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = Query(None)
                                 await websocket.send_json({"type": "audio", "audio_url": f"/{sub}/{os.path.basename(audio_path)}"})
                         except: pass
                     asyncio.create_task(handle_tts(clean_text, emotion))
-                    
-                    # 重新獲取歷史並保存 (此處維持正確的存儲邏輯)
                     history = session_store.get_messages(session_id)
                     history.append(HumanMessage(content=user_input))
                     history.append(AIMessage(content=reply_text))

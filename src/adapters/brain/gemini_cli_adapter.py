@@ -42,10 +42,20 @@ class GeminiCLIBrainAdapter(IBrainAdapter):
                 try:
                     # 嘗試解析
                     parsed = json.loads(json_str)
+                    
+                    # 獲取 action_type
+                    act_type = str(parsed.get("action_type", "REPLY"))
+                    
+                    # 獲取 action_param，並支援多種可能的欄位名（容錯 LLM 的幻覺）
+                    act_param = parsed.get("action_param")
+                    if act_param is None or (act_type == "REPLY" and not str(act_param).strip()):
+                        # 如果是 REPLY 且 param 為空，嘗試尋找其他可能的回覆欄位
+                        act_param = parsed.get("reply") or parsed.get("content") or parsed.get("message") or act_param or ""
+
                     return ThoughtResponse(
                         thought=str(parsed.get("thought", "分析中...")),
-                        action_type=str(parsed.get("action_type", "REPLY")),
-                        action_param=str(parsed.get("action_param", ""))
+                        action_type=act_type,
+                        action_param=str(act_param)
                     )
                 except json.JSONDecodeError:
                     pass # 失敗則走下方的 INVALID_FORMAT

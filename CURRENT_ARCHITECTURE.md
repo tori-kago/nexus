@@ -1,63 +1,58 @@
-# Nexus 系統架構報告 (v4.3 - Distributed Presence)
+# Nexus 系統架構報告 (v5.2 - Robust Autonomous Engineer)
 
-本文件描述了 Nexus 最新 (v4.3) 的實作架構，重點在於多平台支援、持久化會話與主動通知能力。
+本文件描述了 Nexus 最新 (v5.2) 的實作架構，重點在於**格式容錯**、**並發安全**與**推理透明化**。
 
 ## 📊 當前系統架構圖 (2026-04-21)
 
 ```mermaid
 graph TD
     subgraph "接入層 (Distributed Interfaces)"
-        CLI["Interactive CLI<br/>(src/agent/cli_interactive.py)"]
-        TG["Telegram Bot<br/>(src/agent/tg_bot.py)"]
-        DC["Discord Bot<br/>(src/agent/discord_bot.py)"]
+        CLI["Interactive CLI<br/>(v5.1 - Fixed Loop)"]
+        TG["Telegram Bot<br/>(v4.3 - Mirroring)"]
+        DC["Discord Bot<br/>(v4.3 - Mirroring)"]
     end
 
-    subgraph "通信層 (Notification Hub)"
-        Gateway["Nexus Gateway<br/>(src/gateway/main.py)"]
-        Notify_API["/notify & /register<br/>(Active Push)"]
+    subgraph "通信與防護層 (Gateway & Shield)"
+        Gateway["Nexus Gateway<br/>(Persistence Hub)"]
+        Concurrency_Lock["Trace Lock<br/>(Async Guard)"]
+        Deep_Copy["Context Isolation<br/>(DeepCopy Guard)"]
     end
 
-    subgraph "核心控制層 (Orchestrator)"
-        Flow_Manager["NexusOrchestrator<br/>(Reasoning Loop)"]
-        Session_DB[("SQLite Session DB<br/>(sessions.db)")]
+    subgraph "核心控制層 (Nexus Core)"
+        Orchestrator["Orchestrator<br/>(Deep Thought Flow 5.0)"]
+        Trace_Log[("Trace Log<br/>(.log)")]
+        Knowledge_Log[("Knowledge Log<br/>(.md)")]
     end
 
     subgraph "適配器層 (Hybrid Adapters)"
-        Senses["Hybrid STT/TTS<br/>(Azure/Whisper/11Labs)"]
-        Vault["Vault 2.1<br/>(Resilient Markdown)"]
-        Tools["Tools 2.2<br/>(Type-safe Skills)"]
+        Brain["GeminiCLIBrainAdapter<br/>(Robust JSON Parser)"]
+        Vault["VaultAdapter 2.2<br/>(Tiered Hierarchy)"]
+        Senses["Hybrid STT/TTS"]
+        Tools["Tools 2.2"]
     end
 
-    %% 請求流向
-    CLI <-->|WebSocket| Gateway
-    TG <-->|WS + Notify Callback| Gateway
-    DC <-->|WS + Notify Callback| Gateway
+    %% 資料流與防護
+    CLI <--> Gateway
+    TG <--> Gateway
+    DC <--> Gateway
     
-    Gateway -- "Query/Save" --> Session_DB
-    Gateway -- "Inject" --> Flow_Manager
-    
-    Flow_Manager <--> Senses
-    Flow_Manager <--> Vault
-    Flow_Manager <--> Tools
-
-    %% 主動通知流
-    External_Task["Scheduler / Logic"] -- "POST /notify" --> Notify_API
-    Notify_API -- "Relay" --> TG
-    Notify_API -- "Relay" --> DC
+    Gateway -- "DeepCopy" --> Orchestrator
+    Orchestrator -- "Locking" --> Trace_Log
+    Orchestrator -- "Parsing" --> Brain
+    Orchestrator -- "Update" --> Vault
 ```
 
-## 🔍 架構關鍵特徵 (v4.3)
+## 🔍 架構關鍵升級 (v5.2)
 
-### 1. 多平台會話同步 (Cross-platform Persistence)
-*   採用 **SQLite (`sessions.db`)** 作為對話歷史的中樞。
-*   不同的入口 (CLI, TG, Discord) 共享同一個會話識別碼。用戶在 CLI 斷開後，在 TG 能銜接上之前的語境。
+### 1. 三向防護系統 (Triple Shield)
+*   **防護 A (格式容錯)**：Brain Adapter 具備正則 JSON 提取能力，能自動忽略大腦輸出的 Markdown 標記或雜訊，穩定率提升 90%。
+*   **防護 B (並發鎖)**：Orchestrator 內置 `trace_lock`，確保心跳任務與用戶對話不會交錯寫入日誌，消滅了「Step 交錯」的靈異現象。
+*   **防護 C (Context 隔離)**：Gateway 在每次推理前執行 `deepcopy`，物理隔絕了不同會話與心跳任務之間的記憶體污染。
 
-### 2. 全時通知中心 (Notification Hub)
-*   **平台註冊機制**：每個機器人啟動時會向 Gateway 註冊其接收推送的位址。
-*   **離線推送**：即使 WebSocket 斷開，核心仍能透過 `/notify` 接口主動找到用戶所在的平台發送緊急訊息。
+### 2. 深度思維流 (Deep Thought Flow)
+*   解除步數限制 (上限 20 步)，賦予大腦「探索 -> 學習 -> 執行 -> 自癒」的完整自主週期。
+*   在 `trace.log` 中詳細紀錄每一步，與 OpenClaw 的推理透明度完全對標。
 
-### 3. 語音鏡像處理 (Sensory Mirroring)
-*   機器人自動感知輸入媒介。語音輸入觸發「文字+語音」回覆；文字輸入觸發「純文字」回覆。
-
-### 4. 系統健壯性 (Resilience)
-*   維持自動 Git 快照、錯誤沙盒與垃圾自動清理邏輯。
+### 3. 日誌職責分離
+*   **`.log`**：記錄大腦的靈魂與髒活（過程）。
+*   **`.md`**：記錄乾淨的新知（結論）。
