@@ -4,7 +4,8 @@ import logging
 
 logger = logging.getLogger("Nexus.Resilience")
 
-PROJECT_ROOT = "/home/m2root/henry/nexus/"
+# 動態獲取專案根目錄
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 def create_vault_snapshot(reason: str) -> bool:
     """

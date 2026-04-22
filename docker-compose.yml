@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: nexus-gateway
+    ports:
+      - "8000:8000"
+    volumes:
+      # 掛載 .env 方便隨時在外部修改
+      - ./.env:/app/.env
+      # 持久化機器人大腦記憶 (.md 與 .db 檔案)
+      - ./src/brain/vault:/app/src/brain/vault
+      # 掛載 .git 以支援 Git 快照/回滾功能
+      - ./.git:/app/.git
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always

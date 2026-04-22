@@ -4,7 +4,8 @@ import glob
 from typing import List, Optional
 from src.adapters.tool.resilience_utils import create_vault_snapshot, rollback_vault
 
-ALLOWED_BASE = "/home/m2root/henry/nexus/"
+# 動態獲取專案根目錄
+ALLOWED_BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 def run_shell(command: str) -> str:
     """執行終端機指令。用於診斷環境、安裝依賴或執行技能。"""

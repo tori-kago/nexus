@@ -6,7 +6,8 @@ from typing import List, Any, Optional
 from langchain_core.messages import HumanMessage, AIMessage
 
 logger = logging.getLogger("Nexus.SessionStore")
-PROJECT_ROOT = "/home/m2root/henry/nexus/"
+# 動態獲取專案根目錄，避免硬編碼路徑
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DB_PATH = os.path.join(PROJECT_ROOT, "src/brain/vault/sessions.db")
 
 class SessionStore:
